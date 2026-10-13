@@ -95,6 +95,7 @@ type View =
   | "dashboard"
   | "papers"
   | "scores"
+  | "pastPaperTracker"
   | "focus"
   | "examTimer"
   | "examMarker"
@@ -129,6 +130,7 @@ interface ScoreEntry {
   date: string;
   type: "Practice" | "Test" | "Prelim" | "Past Paper" | "Exam";
   notes: string;
+  improvementNotes?: string;
 }
 interface Recommendation {
   id: string;
@@ -155,11 +157,25 @@ interface Task {
 }
 interface ExamDate {
   id: string;
-  subject: string;
-  level: Level;
+  subject?: string;
+  level?: Level;
   date: string;
   time?: string;
-  isPrelim: boolean;
+  kind?: "Exam" | "Prelim" | "Test" | "Other";
+  title?: string;
+  isPrelim?: boolean;
+}
+interface PastPaperScoreEntry {
+  id: string;
+  subject: string;
+  level: Level;
+  paper: "Paper 1" | "Paper 2" | "Single Paper";
+  year: number;
+  score: number;
+  maxScore: number;
+  question?: string;
+  improvementNotes?: string;
+  date: string;
 }
 interface DrawStroke {
   tool: "pen" | "eraser" | "line" | "rect" | "circle";
@@ -334,6 +350,29 @@ function formatDate(d: string) {
   });
 }
 
+function getCalendarEventKind(event: ExamDate): NonNullable<ExamDate["kind"]> {
+  return event.kind ?? (event.isPrelim ? "Prelim" : "Exam");
+}
+
+function getCalendarEventName(event: ExamDate): string {
+  return getCalendarEventKind(event) === "Other"
+    ? event.title || "Event"
+    : event.subject || "Untitled event";
+}
+
+function getCalendarEventColor(kind: NonNullable<ExamDate["kind"]>): string {
+  switch (kind) {
+    case "Exam":
+      return "#ef4444";
+    case "Prelim":
+      return "#8b5cf6";
+    case "Test":
+      return "#2563eb";
+    case "Other":
+      return "#0f766e";
+  }
+}
+
 function simpleHash(s: string): string {
   try {
     return btoa(encodeURIComponent(s + "_qs_salt_2026"));
@@ -397,10 +436,10 @@ function AppLogo({
         : "w-12 h-12";
   const inner =
     size === "sm"
-      ? "w-7 h-7"
+      ? "w-8 h-8"
       : size === "lg"
-        ? "w-14 h-14"
-        : "w-8 h-8";
+        ? "w-16 h-16"
+        : "w-9 h-9";
   return (
     <div
       className={`${outer} rounded-2xl flex items-center justify-center shrink-0`}
@@ -435,11 +474,10 @@ function MonthlyCalendar({
   const totalCells =
     Math.ceil((startOffset + daysInMonth) / 7) * 7;
 
-  const examDaySet = new Set(examDates.map((e) => e.date));
-  const examsByDate: Record<string, ExamDate[]> = {};
+  const eventsByDate: Record<string, ExamDate[]> = {};
   for (const e of examDates) {
-    if (!examsByDate[e.date]) examsByDate[e.date] = [];
-    examsByDate[e.date].push(e);
+    if (!eventsByDate[e.date]) eventsByDate[e.date] = [];
+    eventsByDate[e.date].push(e);
   }
 
   function prevMonth() {
@@ -466,7 +504,7 @@ function MonthlyCalendar({
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           <Calendar className="w-4 h-4 text-primary" />
-          <h3 className="font-semibold text-sm">Exam Calendar</h3>
+          <h3 className="font-semibold text-sm">Calendar</h3>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -505,39 +543,39 @@ function MonthlyCalendar({
           if (day === null) return <div key={i} />;
           const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
           const isToday = dateStr === today;
-          const hasExam = examDaySet.has(dateStr);
-          const examsOnDay = examsByDate[dateStr] || [];
+          const eventsOnDay = eventsByDate[dateStr] || [];
+          const eventKinds = [...new Set(eventsOnDay.map(getCalendarEventKind))];
+          const firstEventKind = eventKinds[0];
           return (
             <div
               key={i}
               title={
-                hasExam
-                  ? examsOnDay
-                      .map((e) => `${e.subject}${e.time ? " at " + e.time : ""}`)
+                eventsOnDay.length
+                  ? eventsOnDay
+                      .map((e) => `${getCalendarEventKind(e)}: ${getCalendarEventName(e)}${e.time ? " at " + e.time : ""}`)
                       .join(", ")
                   : dateStr
               }
               className={`h-8 w-full rounded-lg flex items-center justify-center text-xs font-medium transition-colors relative
                 ${isToday ? "ring-2 ring-primary ring-offset-1" : ""}
-                ${hasExam ? "bg-red-500 text-white font-bold" : "bg-muted text-muted-foreground"}`}
+                ${firstEventKind ? "text-white font-bold" : "bg-muted text-muted-foreground"}`}
+              style={firstEventKind ? { backgroundColor: getCalendarEventColor(firstEventKind) } : undefined}
             >
               {day}
-              {hasExam && (
-                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-amber-400 rounded-full border border-white" />
-              )}
+              {eventKinds.length > 1 && <span className="absolute bottom-0.5 flex gap-0.5">
+                {eventKinds.slice(1, 4).map((kind) => <span key={kind} className="h-1 w-1 rounded-full border border-white" style={{ backgroundColor: getCalendarEventColor(kind) }} />)}
+              </span>}
             </div>
           );
         })}
       </div>
-      <div className="flex items-center gap-3 mt-3 text-xs text-muted-foreground">
-        <span className="flex items-center gap-1.5">
-          <span className="w-3 h-3 rounded bg-red-500 inline-block" />{" "}
-          Exam day
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="w-3 h-3 rounded bg-muted inline-block" />{" "}
-          No exam
-        </span>
+      <div className="flex flex-wrap items-center gap-3 mt-3 text-xs text-muted-foreground">
+        {(["Exam", "Prelim", "Test", "Other"] as const).map((kind) => (
+          <span key={kind} className="flex items-center gap-1.5">
+            <span className="w-3 h-3 rounded inline-block" style={{ backgroundColor: getCalendarEventColor(kind) }} />
+            {kind}
+          </span>
+        ))}
         <span className="flex items-center gap-1.5">
           <span className="w-3 h-3 rounded ring-2 ring-primary inline-block" />{" "}
           Today
@@ -1897,10 +1935,10 @@ const NAV_ITEMS: {
     icon: LayoutDashboard,
   },
   { id: "papers", label: "Past Papers", icon: FileText },
-  { id: "scores", label: "Score Tracker", icon: TrendingUp },
+  { id: "scores", label: "Tracker", icon: TrendingUp },
   { id: "examMarker", label: "Exam Marker", icon: ScanSearch },
+  { id: "exams", label: "Calendar", icon: Calendar },
   { id: "tasks", label: "Tasks", icon: CheckSquare },
-  { id: "exams", label: "Exams", icon: GraduationCap },
   { id: "wellbeing", label: "Wellbeing", icon: Heart },
   { id: "break", label: "Break", icon: Gamepad2 },
   { id: "notes", label: "Notes", icon: StickyNote },
@@ -1924,11 +1962,15 @@ function Sidebar({
   toggleDark: () => void;
   onClose: () => void;
 }) {
+  const [trackerOpen, setTrackerOpen] = useState(
+    view === "scores" || view === "pastPaperTracker",
+  );
   const [timerOpen, setTimerOpen] = useState(
     view === "focus" || view === "examTimer",
   );
 
   useEffect(() => {
+    if (view === "scores" || view === "pastPaperTracker") setTrackerOpen(true);
     if (view === "focus" || view === "examTimer") setTimerOpen(true);
   }, [view]);
 
@@ -1958,25 +2000,58 @@ function Sidebar({
       <nav className="flex-1 py-3 overflow-y-auto">
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon;
-          const active = view === item.id;
+          const active = item.id === "scores"
+            ? view === "scores" || view === "pastPaperTracker"
+            : view === item.id;
           return (
             <div key={item.id}>
               <button
                 type="button"
                 onClick={() => {
+                  if (item.id === "scores") {
+                    setTrackerOpen((open) => !open);
+                    return;
+                  }
                   setView(item.id);
                   onClose();
                 }}
+                aria-expanded={item.id === "scores" ? trackerOpen : undefined}
                 className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium transition-all text-left relative ${active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "text-sidebar-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"}`}
               >
                 <Icon className="w-4 h-4 shrink-0" />
-                {item.label}
+                <span className="flex-1">{item.label}</span>
+                {item.id === "scores" && <ChevronDown className={`w-4 h-4 transition-transform ${trackerOpen ? "rotate-180" : ""}`} />}
                 {active && (
                   <div className="absolute right-0 top-1/2 -translate-y-1/2 w-1 h-6 rounded-l-full bg-sidebar-primary" />
                 )}
               </button>
               {item.id === "scores" && (
                 <div>
+                  {trackerOpen && (
+                    <div className="pb-1">
+                      {([
+                        { id: "scores", label: "Score Tracker", icon: TrendingUp },
+                        { id: "pastPaperTracker", label: "Past Paper Tracker", icon: FileText },
+                      ] as const).map((tracker) => {
+                        const TrackerIcon = tracker.icon;
+                        const trackerActive = view === tracker.id;
+                        return (
+                          <button
+                            key={tracker.id}
+                            type="button"
+                            onClick={() => {
+                              setView(tracker.id);
+                              onClose();
+                            }}
+                            className={`w-full flex items-center gap-3 pl-11 pr-4 py-2 text-sm font-medium transition-all text-left ${trackerActive ? "bg-sidebar-accent text-sidebar-accent-foreground" : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"}`}
+                          >
+                            <TrackerIcon className="w-4 h-4 shrink-0" />
+                            {tracker.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                   <button
                     type="button"
                     onClick={() => setTimerOpen((open) => !open)}
@@ -2171,9 +2246,7 @@ function Dashboard({
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <Clock className="w-4 h-4 text-primary" />
-              <h3 className="font-semibold text-sm">
-                Upcoming Exams
-              </h3>
+              <h3 className="font-semibold text-sm">Upcoming Events</h3>
             </div>
             <button
               type="button"
@@ -2185,7 +2258,7 @@ function Dashboard({
           </div>
           {upcoming.length === 0 ? (
             <p className="text-muted-foreground text-xs py-4 text-center">
-              No exam dates added yet.
+              No upcoming events added yet.
             </p>
           ) : (
             <div className="space-y-2">
@@ -2196,13 +2269,11 @@ function Dashboard({
                 >
                   <div>
                     <p className="font-semibold text-sm">
-                      {e.subject}{" "}
-                      <span className="text-xs text-muted-foreground">
-                        ({e.level})
-                      </span>
+                      {getCalendarEventName(e)}
+                      {e.level && <span className="text-xs text-muted-foreground"> ({e.level})</span>}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {e.isPrelim ? "Prelim" : "QS Exam"} ·{" "}
+                      {getCalendarEventKind(e)} ·{" "}
                       {formatDate(e.date)}
                       {e.time && ` at ${e.time}`}
                     </p>
@@ -3167,7 +3238,7 @@ function MarkingSchemeExaminer({ selectedSubjects }: { selectedSubjects: Selecte
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3"><textarea value={questionText} onChange={(e) => setQuestionText(e.target.value)} rows={4} placeholder="Paste the question here..." className="w-full px-3 py-2 rounded-lg border border-border bg-input-background text-sm resize-y" /><textarea value={answerText} onChange={(e) => setAnswerText(e.target.value)} rows={4} placeholder="Paste your answer here (optional)..." className="w-full px-3 py-2 rounded-lg border border-border bg-input-background text-sm resize-y" /><textarea value={markSchemeText} onChange={(e) => setMarkSchemeText(e.target.value)} rows={4} placeholder="Paste the marking scheme here..." className="w-full px-3 py-2 rounded-lg border border-border bg-input-background text-sm resize-y" /></div>
       <button type="submit" disabled={photos.length === 0 && !questionText.trim() && !markSchemeText.trim()} className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary text-primary-foreground font-semibold text-sm disabled:opacity-40"><ScanSearch className="w-4 h-4" /> Examine Mark Scheme</button>
     </form>
-    {result && <div ref={resultRef} className="space-y-4 scroll-mt-4"><div className="bg-card border border-border rounded-xl p-5"><h2 className="font-bold text-sm mb-2">AI overview</h2><p className="text-sm leading-6">{result.overview}</p>{result.answerOverview && <p className="text-sm leading-6 mt-3 text-muted-foreground"><span className="font-semibold text-foreground">Your answer:</span> {result.answerOverview}</p>}{result.marksAwarded && <div className="mt-4 flex flex-wrap items-center gap-3"><span className="text-2xl font-black text-primary">{result.marksAwarded.awarded}/{result.marksAwarded.available}</span><span className="text-sm text-muted-foreground">estimated marks</span><span className="text-sm">{result.marksAwarded.explanation}</span></div>}</div><div className="grid grid-cols-1 md:grid-cols-2 gap-4">{section(result.marksAwarded ? "How To Improve This Answer" : "Tips For Securing Marks", <CheckSquare className="w-4 h-4" />, <ul className="list-disc list-inside space-y-2 text-sm">{(result.guidance || result.stepByStep).map((item) => <li key={item}>{item}</li>)}</ul>)}{section("Step-by-Step Examiner Solution", <CheckSquare className="w-4 h-4" />, <ol className="list-decimal list-inside space-y-2 text-sm">{result.stepByStep.map((item) => <li key={item}>{item}</li>)}</ol>)}{section("Must-Have QS Keywords", <Award className="w-4 h-4" />, <div className="flex flex-wrap gap-2">{result.qsKeywords.map((item) => <span key={item} className="px-2.5 py-1 rounded-full bg-primary/10 text-primary text-xs font-bold">{item}</span>)}</div>)}{section("Zero-Mark Traps", <AlertCircle className="w-4 h-4" />, <ul className="list-disc list-inside space-y-2 text-sm">{result.zeroMarkTraps.map((item) => <li key={item}>{item}</li>)}</ul>)}{section("Instant 1-Mark Practice Challenge", <GraduationCap className="w-4 h-4" />, <div className="space-y-2 text-sm"><p className="font-semibold">{result.practiceChallenge.question}</p><p className="text-muted-foreground">{result.practiceChallenge.answer}</p></div>)}</div></div>}
+    {result && <div ref={resultRef} className="space-y-4 scroll-mt-4"><div className="bg-card border border-border rounded-xl p-5"><h2 className="font-bold text-sm mb-2">Overview</h2><p className="text-sm leading-6">{result.overview}</p>{result.answerOverview && <p className="text-sm leading-6 mt-3 text-muted-foreground"><span className="font-semibold text-foreground">Your answer:</span> {result.answerOverview}</p>}{result.marksAwarded && <div className="mt-4 flex flex-wrap items-center gap-3"><span className="text-2xl font-black text-primary">{result.marksAwarded.awarded}/{result.marksAwarded.available}</span><span className="text-sm text-muted-foreground">estimated marks</span><span className="text-sm">{result.marksAwarded.explanation}</span></div>}</div><div className="grid grid-cols-1 md:grid-cols-2 gap-4">{section(result.marksAwarded ? "How To Improve This Answer" : "Tips For Securing Marks", <CheckSquare className="w-4 h-4" />, <ul className="list-disc list-inside space-y-2 text-sm">{(result.guidance || result.stepByStep).map((item) => <li key={item}>{item}</li>)}</ul>)}{section("Step-by-Step Examiner Solution", <CheckSquare className="w-4 h-4" />, <ol className="list-decimal list-inside space-y-2 text-sm">{result.stepByStep.map((item) => <li key={item}>{item}</li>)}</ol>)}{section("Must-Have QS Keywords", <Award className="w-4 h-4" />, <div className="flex flex-wrap gap-2">{result.qsKeywords.map((item) => <span key={item} className="px-2.5 py-1 rounded-full bg-primary/10 text-primary text-xs font-bold">{item}</span>)}</div>)}{section("Zero-Mark Traps", <AlertCircle className="w-4 h-4" />, <ul className="list-disc list-inside space-y-2 text-sm">{result.zeroMarkTraps.map((item) => <li key={item}>{item}</li>)}</ul>)}{section("Instant 1-Mark Practice Challenge", <GraduationCap className="w-4 h-4" />, <div className="space-y-2 text-sm"><p className="font-semibold">{result.practiceChallenge.question}</p><p className="text-muted-foreground">{result.practiceChallenge.answer}</p></div>)}</div></div>}
     {result && <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{section("Mark Allocation Breakdown", <CheckSquare className="w-4 h-4" />, <ol className="list-decimal list-inside space-y-2 text-sm">{result.markAllocationBreakdown.map((item) => <li key={item}>{item}</li>)}</ol>)}{section("Feedback and Fixes", <AlertCircle className="w-4 h-4" />, <ul className="list-disc list-inside space-y-2 text-sm">{result.feedbackAndFixes.map((item) => <li key={item}>{item}</li>)}</ul>)}</div>}
   </div>;
 }
@@ -3276,7 +3347,20 @@ function ExamMarker({ selectedSubjects }: { selectedSubjects: SelectedSubject[] 
           documents,
         }),
       });
-      const payload = await response.json() as { result?: ExamMarkerResult; error?: string };
+      const responseText = await response.text();
+      let parsedPayload: unknown;
+      try {
+        parsedPayload = JSON.parse(responseText);
+      } catch {
+        if (!response.headers.get("content-type")?.includes("application/json")) {
+          throw new Error(`The marking service returned a non-JSON response (HTTP ${response.status}). Confirm this deployment routes /api/exam-marker to the serverless API.`);
+        }
+        throw new Error("The marking service returned invalid JSON. Please try again; if this continues, check the server logs.");
+      }
+      if (!parsedPayload || typeof parsedPayload !== "object" || Array.isArray(parsedPayload)) {
+        throw new Error("The marking service returned an unexpected response. Please try again.");
+      }
+      const payload = parsedPayload as { result?: ExamMarkerResult; error?: string };
       if (!response.ok || !payload.result) throw new Error(payload.error || "The marking request could not be completed.");
       setResult(payload.result);
     } catch (requestError) {
@@ -3301,6 +3385,7 @@ function ExamMarker({ selectedSubjects }: { selectedSubjects: SelectedSubject[] 
     <header>
       <h1 className="text-xl font-bold">Exam Marker</h1>
       <p className="mt-1 text-sm text-muted-foreground">Upload a question and its marking scheme for a tailored explanation. Add your answer for a mark estimate and specific feedback.</p>
+      <p className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm leading-5 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">Any mark shown is an estimate for practice only. It is not guaranteed and may differ from the mark awarded by a QS marker.</p>
     </header>
     <form onSubmit={reviewAnswer} className="space-y-4">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -3357,7 +3442,7 @@ function ExamMarker({ selectedSubjects }: { selectedSubjects: SelectedSubject[] 
     {result && <div ref={resultRef} className="scroll-mt-4 space-y-4" aria-live="polite">
       {result.score !== null && result.maxMarks !== null && <section className="flex flex-wrap items-center gap-3 rounded-lg border border-primary/25 bg-primary/5 p-4">
         <span className="text-3xl font-black tabular-nums text-primary">{result.score}/{result.maxMarks}</span>
-        <span className="text-sm font-semibold">AI mark estimate against the uploaded scheme</span>
+        <span className="text-sm font-semibold">Estimated mark against the uploaded scheme</span>
       </section>}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         {listSection("What the question is asking", result.questionExplanation)}
@@ -3379,7 +3464,7 @@ function ExamMarker({ selectedSubjects }: { selectedSubjects: SelectedSubject[] 
           {listSection("What to change for more marks", result.improvements)}
         </div>
         : <p className="rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground">Add your answer next time to receive a mark and specific feedback on what to improve.</p>}
-      <p className="rounded-lg bg-muted px-3 py-2 text-xs leading-5 text-muted-foreground">{result.confidenceNote} AI feedback is a practice estimate, not an official SQA mark.</p>
+      <p className="rounded-lg bg-muted px-3 py-2 text-xs leading-5 text-muted-foreground">{result.confidenceNote} This is only an estimate for practice, is not guaranteed, and is not an official SQA mark.</p>
     </div>}
   </div>;
 }
@@ -3395,6 +3480,9 @@ function ScoreTracker({
   selectedSubjects: SelectedSubject[];
 }) {
   const [addingScore, setAddingScore] = useState(false);
+  const [selectedScore, setSelectedScore] = useState<ScoreEntry | null>(null);
+  const [improvementNotes, setImprovementNotes] = useState("");
+  const [improvementNotesSaved, setImprovementNotesSaved] = useState(false);
   const [filterSubject, setFilterSubject] = useState("All");
   const [form, setForm] = useState({
     subject: selectedSubjects[0]?.subject || "",
@@ -3520,7 +3608,7 @@ function ScoreTracker({
         <div>
           <h1 className="text-xl font-bold">Score Tracker</h1>
           <p className="text-muted-foreground text-xs mt-1">
-            Log scores and track your progress over time.
+            Log scores and track your progress. Select any score to add or view improvement notes; saved notes stay with that score.
           </p>
         </div>
         <button
@@ -3658,7 +3746,16 @@ function ScoreTracker({
                     backgroundColor: subjectColor(s.subject),
                   }}
                 />
-                <div className="flex-1 min-w-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedScore(s);
+                    setImprovementNotes(s.improvementNotes || "");
+                    setImprovementNotesSaved(Boolean(s.improvementNotes));
+                  }}
+                  className="flex-1 min-w-0 text-left"
+                  aria-label={`View ${s.subject} ${s.type} score details`}
+                >
                   <p className="font-semibold text-sm">
                     {s.subject}{" "}
                     <span className="text-xs text-muted-foreground">
@@ -3669,7 +3766,10 @@ function ScoreTracker({
                     {s.type} · {formatDate(s.date)}
                     {s.notes && ` · ${s.notes}`}
                   </p>
-                </div>
+                  <p className={`mt-1 text-xs font-medium ${s.improvementNotes ? "text-green-700 dark:text-green-400" : "text-primary"}`}>
+                    {s.improvementNotes ? "Improvement notes saved · select to view" : "Select to add improvement notes"}
+                  </p>
+                </button>
                 <div className="flex items-center gap-2 shrink-0">
                   <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden">
                     <div
@@ -3755,7 +3855,7 @@ function ScoreTracker({
                 }
                 className="w-full px-3 py-2 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
               >
-                {["Practice", "Test", "Prelim", "Past Paper", "Exam"].map(
+                {["Practice", "Test", "Prelim", "Exam"].map(
                   (t) => (
                     <option key={t}>{t}</option>
                   ),
@@ -3848,6 +3948,271 @@ function ScoreTracker({
                 Save
               </button>
             </div>
+          </form>
+        </div>
+      )}
+      {selectedScore && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const updatedScore = { ...selectedScore, improvementNotes };
+              setScores(scores.map((score) => score.id === selectedScore.id ? updatedScore : score));
+              setSelectedScore(updatedScore);
+              setImprovementNotesSaved(true);
+            }}
+            className="bg-card text-card-foreground rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold">Score details &amp; improvement notes</h3>
+              <button type="button" onClick={() => setSelectedScore(null)} className="p-1.5 rounded-lg hover:bg-muted" aria-label="Close score details">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="rounded-xl bg-muted p-4">
+              <p className="font-semibold">{selectedScore.subject} · {selectedScore.level}</p>
+              <p className="text-sm text-muted-foreground">{selectedScore.type} · {formatDate(selectedScore.date)}</p>
+              <p className="mt-2 text-lg font-bold">{selectedScore.score} / {selectedScore.maxScore} ({Math.round(selectedScore.score / selectedScore.maxScore * 100)}%)</p>
+              {selectedScore.notes && <p className="mt-1 text-sm text-muted-foreground">{selectedScore.notes}</p>}
+            </div>
+            <div>
+              <label htmlFor="score-improvements" className="block text-xs font-semibold mb-1">What should you improve for next time?</label>
+              <textarea
+                id="score-improvements"
+                value={improvementNotes}
+                onChange={(e) => {
+                  setImprovementNotes(e.target.value);
+                  setImprovementNotesSaved(false);
+                }}
+                rows={4}
+                className="w-full px-3 py-2 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                placeholder="Note the topics, questions, or skills to work on."
+              />
+            </div>
+            <button type="submit" className="w-full py-2.5 rounded-xl bg-primary text-primary-foreground font-semibold text-sm hover:opacity-90">
+              Save notes
+            </button>
+            {improvementNotesSaved && (
+              <p role="status" className="flex items-center justify-center gap-1.5 text-sm font-semibold text-green-700 dark:text-green-400">
+                <Check className="h-4 w-4" /> Saved with this score
+              </p>
+            )}
+          </form>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PastPaperTracker({
+  entries,
+  setEntries,
+  selectedSubjects,
+}: {
+  entries: PastPaperScoreEntry[];
+  setEntries: (entries: PastPaperScoreEntry[]) => void;
+  selectedSubjects: SelectedSubject[];
+}) {
+  const [adding, setAdding] = useState(false);
+  const [filterSubject, setFilterSubject] = useState("All");
+  const [questionSpecific, setQuestionSpecific] = useState(false);
+  const [selectedEntry, setSelectedEntry] = useState<PastPaperScoreEntry | null>(null);
+  const [improvementNotes, setImprovementNotes] = useState("");
+  const [improvementNotesSaved, setImprovementNotesSaved] = useState(false);
+  const [form, setForm] = useState({
+    subject: selectedSubjects[0]?.subject || "",
+    level: (selectedSubjects[0]?.level || "Higher") as Level,
+    paper: "Paper 1" as PastPaperScoreEntry["paper"],
+    year: String(new Date().getFullYear() - 1),
+    score: "",
+    maxScore: "100",
+    question: "",
+  });
+  const subjectNames = [...new Set(entries.map((entry) => entry.subject))];
+  const visibleEntries = (filterSubject === "All"
+    ? entries
+    : entries.filter((entry) => entry.subject === filterSubject)
+  ).sort((a, b) => a.year - b.year || a.date.localeCompare(b.date));
+  const chartData = visibleEntries.map((entry, index) => ({
+    date: `${entry.year} ${entry.paper === "Single Paper" ? "Single" : entry.paper.replace("Paper ", "P")}`,
+    [entry.subject]: Math.round((entry.score / entry.maxScore) * 100),
+    key: `${entry.id}-${index}`,
+  }));
+  const chartSubjects = filterSubject === "All" ? subjectNames : [filterSubject];
+  const colors = ["#1a3a6e", "#0ea5a0", "#f59e0b", "#8b5cf6", "#ef4444", "#16a34a"];
+  const subjectColor = (subject: string) => colors[Math.max(0, subjectNames.indexOf(subject)) % colors.length];
+
+  function addEntry(e: React.FormEvent) {
+    e.preventDefault();
+    setEntries([...entries, {
+      id: generateId(),
+      subject: form.subject,
+      level: form.level,
+      paper: form.paper,
+      year: Number(form.year),
+      score: Number(form.score),
+      maxScore: Number(form.maxScore),
+      question: questionSpecific ? form.question.trim() || undefined : undefined,
+      date: todayStr(),
+    }]);
+    setForm((previous) => ({ ...previous, score: "", question: "" }));
+    setQuestionSpecific(false);
+    setAdding(false);
+  }
+
+  const fieldClass = "w-full px-3 py-2 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-ring";
+
+  return (
+    <div className="p-6 space-y-5">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h1 className="text-xl font-bold">Past Paper Tracker</h1>
+          <p className="text-muted-foreground text-xs mt-1">Track past-paper results by subject, level, paper, and year. Select any score to add or view improvement notes.</p>
+        </div>
+        <button type="button" onClick={() => setAdding(true)} className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:opacity-90">
+          <Plus className="w-3.5 h-3.5" /> Log Past Paper
+        </button>
+      </div>
+
+      {entries.length > 0 && (
+        <>
+          <div className="flex gap-2 flex-wrap">
+            {["All", ...subjectNames].map((subject) => (
+              <button key={subject} type="button" onClick={() => setFilterSubject(subject)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${filterSubject === subject ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-foreground"}`}>
+                {subject}
+              </button>
+            ))}
+          </div>
+          <div className="bg-card border border-border rounded-2xl p-5">
+            <h2 className="font-semibold text-sm mb-4">Past Paper Score Trend (%)</h2>
+            <ResponsiveContainer width="100%" height={260}>
+              <LineChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: -16 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                <XAxis dataKey="date" tick={{ fontSize: 10, fill: "var(--muted-foreground)" }} />
+                <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: "var(--muted-foreground)" }} tickFormatter={(value) => `${value}%`} />
+                <Tooltip formatter={(value: number, name: string) => [`${value}%`, name]} />
+                {chartSubjects.map((subject) => (
+                  <Line key={subject} type="monotone" dataKey={subject} stroke={subjectColor(subject)} strokeWidth={2} dot={{ r: 4 }} connectNulls />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </>
+      )}
+
+      {visibleEntries.length === 0 ? (
+        <div className="bg-card border border-border rounded-2xl p-10 text-center">
+          <FileText className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
+          <p className="text-muted-foreground text-sm">No past-paper scores logged yet.</p>
+        </div>
+      ) : (
+        <div className="bg-card border border-border rounded-2xl overflow-hidden">
+          {[...visibleEntries].reverse().map((entry) => (
+            <div key={entry.id} className="flex items-center gap-3 px-4 py-3 border-b border-border last:border-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedEntry(entry);
+                  setImprovementNotes(entry.improvementNotes || "");
+                  setImprovementNotesSaved(Boolean(entry.improvementNotes));
+                }}
+                className="flex-1 min-w-0 text-left"
+                aria-label={`View ${entry.subject} past-paper score details`}
+              >
+                <p className="font-semibold text-sm">{entry.subject} <span className="text-xs text-muted-foreground">({entry.level})</span></p>
+                <p className="text-xs text-muted-foreground">{entry.paper} · {entry.year}{entry.question ? ` · Question ${entry.question}` : ""}</p>
+                <p className={`mt-1 text-xs font-medium ${entry.improvementNotes ? "text-green-700 dark:text-green-400" : "text-primary"}`}>
+                  {entry.improvementNotes ? "Improvement notes saved · select to view" : "Select to add improvement notes"}
+                </p>
+              </button>
+              <span className="text-sm font-bold">{entry.score}/{entry.maxScore} ({Math.round(entry.score / entry.maxScore * 100)}%)</span>
+              <button type="button" onClick={() => setEntries(entries.filter((score) => score.id !== entry.id))} className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive" aria-label={`Delete ${entry.subject} past-paper score`}>
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {adding && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <form onSubmit={addEntry} className="bg-card text-card-foreground rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="font-bold">Log a Past Paper Score</h2>
+              <button type="button" onClick={() => setAdding(false)} aria-label="Close past-paper score form" className="p-1.5 rounded-lg hover:bg-muted"><X className="w-4 h-4" /></button>
+            </div>
+            <label className="block text-xs font-semibold">Subject
+              <select required value={`${form.subject}|${form.level}`} onChange={(e) => {
+                const selected = selectedSubjects.find((subject) => `${subject.subject}|${subject.level}` === e.target.value);
+                if (selected) setForm((previous) => ({ ...previous, subject: selected.subject, level: selected.level }));
+              }} className={`${fieldClass} mt-1`}>
+                {selectedSubjects.map((subject) => <option key={`${subject.subject}-${subject.level}`} value={`${subject.subject}|${subject.level}`}>{subject.subject} ({subject.level})</option>)}
+              </select>
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block text-xs font-semibold">Paper
+                <select value={form.paper} onChange={(e) => setForm((previous) => ({ ...previous, paper: e.target.value as PastPaperScoreEntry["paper"] }))} className={`${fieldClass} mt-1`}>
+                  {(["Paper 1", "Paper 2", "Single Paper"] as const).map((paper) => <option key={paper}>{paper}</option>)}
+                </select>
+              </label>
+              <label className="block text-xs font-semibold">Past-paper year
+                <input required type="number" min="1900" max={new Date().getFullYear()} value={form.year} onChange={(e) => setForm((previous) => ({ ...previous, year: e.target.value }))} className={`${fieldClass} mt-1`} />
+              </label>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block text-xs font-semibold">Score
+                <input required type="number" min="0" max={form.maxScore ? Number(form.maxScore) : undefined} value={form.score} onChange={(e) => setForm((previous) => ({ ...previous, score: e.target.value }))} className={`${fieldClass} mt-1`} />
+              </label>
+              <label className="block text-xs font-semibold">Out of
+                <input required type="number" min="1" value={form.maxScore} onChange={(e) => setForm((previous) => ({ ...previous, maxScore: e.target.value }))} className={`${fieldClass} mt-1`} />
+              </label>
+            </div>
+            <label className="flex items-center gap-2 text-sm font-medium">
+              <input type="checkbox" checked={questionSpecific} onChange={(e) => setQuestionSpecific(e.target.checked)} className="rounded" />
+              Add a specific question
+            </label>
+            {questionSpecific && (
+              <label className="block text-xs font-semibold">Question number or part
+                <input required value={form.question} onChange={(e) => setForm((previous) => ({ ...previous, question: e.target.value }))} className={`${fieldClass} mt-1`} placeholder="e.g. 3(b)(ii)" />
+              </label>
+            )}
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setAdding(false)} className="flex-1 py-2.5 rounded-xl border border-border font-semibold text-sm hover:bg-muted">Cancel</button>
+              <button type="submit" className="flex-1 py-2.5 rounded-xl bg-primary text-primary-foreground font-semibold text-sm hover:opacity-90">Save Score</button>
+            </div>
+          </form>
+        </div>
+      )}
+      {selectedEntry && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const updatedEntry = { ...selectedEntry, improvementNotes };
+              setEntries(entries.map((entry) => entry.id === selectedEntry.id ? updatedEntry : entry));
+              setSelectedEntry(updatedEntry);
+              setImprovementNotesSaved(true);
+            }}
+            className="bg-card text-card-foreground rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4"
+          >
+            <div className="flex items-center justify-between">
+              <h2 className="font-bold">Past Paper Details &amp; Improvement Notes</h2>
+              <button type="button" onClick={() => setSelectedEntry(null)} aria-label="Close past-paper score details" className="p-1.5 rounded-lg hover:bg-muted"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="rounded-xl bg-muted p-4">
+              <p className="font-semibold">{selectedEntry.subject} · {selectedEntry.level}</p>
+              <p className="text-sm text-muted-foreground">{selectedEntry.paper} · {selectedEntry.year}{selectedEntry.question ? ` · Question ${selectedEntry.question}` : ""}</p>
+              <p className="mt-2 text-lg font-bold">{selectedEntry.score} / {selectedEntry.maxScore} ({Math.round(selectedEntry.score / selectedEntry.maxScore * 100)}%)</p>
+            </div>
+            <div>
+              <label htmlFor="past-paper-improvements" className="block text-xs font-semibold mb-1">What should you improve for next time?</label>
+              <textarea id="past-paper-improvements" value={improvementNotes} onChange={(e) => {
+                setImprovementNotes(e.target.value);
+                setImprovementNotesSaved(false);
+              }} rows={4} className={fieldClass} placeholder="Note the topics, questions, or skills to work on." />
+            </div>
+            <button type="submit" className="w-full py-2.5 rounded-xl bg-primary text-primary-foreground font-semibold text-sm hover:opacity-90">Save notes</button>
+            {improvementNotesSaved && <p role="status" className="flex items-center justify-center gap-1.5 text-sm font-semibold text-green-700 dark:text-green-400"><Check className="h-4 w-4" /> Saved with this score</p>}
           </form>
         </div>
       )}
@@ -4557,7 +4922,8 @@ function ExamsPanel({
     level: (selectedSubjects[0]?.level || "Higher") as Level,
     date: "",
     time: "",
-    isPrelim: false,
+    kind: "Exam" as NonNullable<ExamDate["kind"]>,
+    title: "",
   });
 
   function openAddExam() {
@@ -4567,7 +4933,8 @@ function ExamsPanel({
       level: selectedSubjects[0]?.level || "Higher",
       date: "",
       time: "",
-      isPrelim: false,
+      kind: "Exam",
+      title: "",
     });
     setAdding(true);
   }
@@ -4575,11 +4942,12 @@ function ExamsPanel({
   function editExam(exam: ExamDate) {
     setEditingId(exam.id);
     setExamForm({
-      subject: exam.subject,
-      level: exam.level,
+      subject: exam.subject || "",
+      level: exam.level || "Higher",
       date: exam.date,
       time: exam.time || "",
-      isPrelim: exam.isPrelim,
+      kind: getCalendarEventKind(exam),
+      title: exam.title || "",
     });
     setAdding(true);
   }
@@ -4590,11 +4958,13 @@ function ExamsPanel({
       setExamDates(examDates.map((exam) => exam.id === editingId
         ? {
             ...exam,
-            subject: examForm.subject,
-            level: examForm.level,
+            subject: examForm.kind === "Other" ? undefined : examForm.subject,
+            level: examForm.kind === "Other" ? undefined : examForm.level,
             date: examForm.date,
             time: examForm.time || undefined,
-            isPrelim: examForm.isPrelim,
+            kind: examForm.kind,
+            title: examForm.kind === "Other" ? examForm.title.trim() : undefined,
+            isPrelim: examForm.kind === "Prelim",
           }
         : exam));
     } else {
@@ -4602,11 +4972,13 @@ function ExamsPanel({
         ...examDates,
         {
         id: generateId(),
-        subject: examForm.subject,
-        level: examForm.level,
+        subject: examForm.kind === "Other" ? undefined : examForm.subject,
+        level: examForm.kind === "Other" ? undefined : examForm.level,
         date: examForm.date,
         time: examForm.time || undefined,
-        isPrelim: examForm.isPrelim,
+        kind: examForm.kind,
+        title: examForm.kind === "Other" ? examForm.title.trim() : undefined,
+        isPrelim: examForm.kind === "Prelim",
         },
       ]);
     }
@@ -4627,9 +4999,9 @@ function ExamsPanel({
     <div className="p-6 space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold">Exams</h1>
+          <h1 className="text-xl font-bold">Calendar</h1>
           <p className="text-muted-foreground text-xs mt-1">
-            Track your exam and prelim dates with countdowns.
+            Plan your exams, tests, and other important dates.
           </p>
         </div>
         <button
@@ -4637,18 +5009,20 @@ function ExamsPanel({
           onClick={openAddExam}
           className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:opacity-90 transition-opacity"
         >
-          <Plus className="w-3.5 h-3.5" /> Add Exam
+          <Plus className="w-3.5 h-3.5" /> Add Event
         </button>
       </div>
+
+      <MonthlyCalendar examDates={examDates} />
 
       {examDates.length === 0 ? (
         <div className="bg-card border border-border rounded-2xl p-12 text-center">
           <GraduationCap className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
           <h3 className="font-semibold text-foreground mb-1">
-            No exams added yet
+            No events added yet
           </h3>
           <p className="text-muted-foreground text-sm">
-            Add your exam and prelim dates to see countdowns.
+            Add an exam, prelim, test, or another event to see its countdown.
           </p>
         </div>
       ) : (
@@ -4677,11 +5051,11 @@ function ExamsPanel({
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="font-bold text-base">
-                        {e.subject}
+                        {getCalendarEventName(e)}
                       </p>
                       <p className="text-sm text-muted-foreground">
-                        {e.isPrelim ? "Prelim" : "QS Exam"} ·{" "}
-                        {LEVEL_SHORT[e.level]} ·{" "}
+                        {getCalendarEventKind(e)}
+                        {e.level && ` · ${LEVEL_SHORT[e.level]}`} ·{" "}
                         {formatDate(e.date)}
                         {e.time && (
                           <span className="font-semibold text-foreground">
@@ -4700,8 +5074,8 @@ function ExamsPanel({
                       type="button"
                       onClick={() => editExam(e)}
                       className="p-1.5 rounded text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors"
-                      aria-label={`Edit ${e.subject} exam date`}
-                      title="Edit exam date"
+                      aria-label={`Edit ${getCalendarEventName(e)} event`}
+                      title="Edit event"
                     >
                       <Pen className="w-4 h-4" />
                     </button>
@@ -4746,11 +5120,11 @@ function ExamsPanel({
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="font-bold text-base">
-                        {e.subject}
+                        {getCalendarEventName(e)}
                       </p>
                       <p className="text-sm text-muted-foreground">
-                        {e.isPrelim ? "Prelim" : "QS Exam"} ·{" "}
-                        {LEVEL_SHORT[e.level]} ·{" "}
+                        {getCalendarEventKind(e)}
+                        {e.level && ` · ${LEVEL_SHORT[e.level]}`} ·{" "}
                         {formatDate(e.date)}
                         {e.time && ` at ${e.time}`}
                       </p>
@@ -4759,8 +5133,8 @@ function ExamsPanel({
                       type="button"
                       onClick={() => editExam(e)}
                       className="p-1.5 rounded text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors"
-                      aria-label={`Edit ${e.subject} exam date`}
-                      title="Edit exam date"
+                      aria-label={`Edit ${getCalendarEventName(e)} event`}
+                      title="Edit event"
                     >
                       <Pen className="w-4 h-4" />
                     </button>
@@ -4792,7 +5166,7 @@ function ExamsPanel({
             className="bg-card text-card-foreground rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4"
           >
             <div className="flex items-center justify-between">
-              <h3 className="font-bold">{editingId ? "Edit Exam / Prelim Date" : "Add Exam / Prelim Date"}</h3>
+              <h3 className="font-bold">{editingId ? "Edit Calendar Event" : "Add Calendar Event"}</h3>
               <button
                 type="button"
                 onClick={() => setAdding(false)}
@@ -4802,53 +5176,62 @@ function ExamsPanel({
               </button>
             </div>
             <div>
-              <label className="block text-xs font-semibold mb-1">
-                Subject
-              </label>
+              <label className="block text-xs font-semibold mb-1">Event type</label>
               <select
-                value={examForm.subject}
-                onChange={(e) =>
-                  setExamForm((f) => ({
-                    ...f,
-                    subject: e.target.value,
-                  }))
-                }
-                required
+                value={examForm.kind}
+                onChange={(e) => setExamForm((f) => ({
+                  ...f,
+                  kind: e.target.value as NonNullable<ExamDate["kind"]>,
+                }))}
                 className={selCls}
               >
-                {selectedSubjects.length === 0 ? (
-                  <option value="">— Select a subject —</option>
-                ) : (
-                  selectedSubjects.map((s) => (
-                    <option
-                      key={`${s.subject}-${s.level}`}
-                      value={s.subject}
-                    >
-                      {s.subject} ({s.level})
-                    </option>
-                  ))
-                )}
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold mb-1">
-                Level
-              </label>
-              <select
-                value={examForm.level}
-                onChange={(e) =>
-                  setExamForm((f) => ({
-                    ...f,
-                    level: e.target.value as Level,
-                  }))
-                }
-                className={selCls}
-              >
-                {LEVELS.map((l) => (
-                  <option key={l}>{l}</option>
+                {(["Exam", "Prelim", "Test", "Other"] as const).map((kind) => (
+                  <option key={kind} value={kind}>{kind}</option>
                 ))}
               </select>
             </div>
+            {examForm.kind === "Other" ? (
+              <div>
+                <label className="block text-xs font-semibold mb-1">What is happening?</label>
+                <input
+                  value={examForm.title}
+                  onChange={(e) => setExamForm((f) => ({ ...f, title: e.target.value }))}
+                  required
+                  className={selCls}
+                  placeholder="e.g. Study group"
+                />
+              </div>
+            ) : (
+              <>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Subject</label>
+                  <select
+                    value={examForm.subject}
+                    onChange={(e) => setExamForm((f) => ({ ...f, subject: e.target.value }))}
+                    required
+                    className={selCls}
+                  >
+                    {selectedSubjects.length === 0
+                      ? <option value="">— Select a subject —</option>
+                      : selectedSubjects.map((s) => (
+                        <option key={`${s.subject}-${s.level}`} value={s.subject}>
+                          {s.subject} ({s.level})
+                        </option>
+                      ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">Level</label>
+                  <select
+                    value={examForm.level}
+                    onChange={(e) => setExamForm((f) => ({ ...f, level: e.target.value as Level }))}
+                    className={selCls}
+                  >
+                    {LEVELS.map((level) => <option key={level}>{level}</option>)}
+                  </select>
+                </div>
+              </>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-semibold mb-1">
@@ -4885,22 +5268,6 @@ function ExamsPanel({
                 />
               </div>
             </div>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={examForm.isPrelim}
-                onChange={(e) =>
-                  setExamForm((f) => ({
-                    ...f,
-                    isPrelim: e.target.checked,
-                  }))
-                }
-                className="w-4 h-4 rounded"
-              />
-              <span className="text-sm font-medium">
-                This is a Prelim (not QS exam)
-              </span>
-            </label>
             <div className="flex gap-2 pt-1">
               <button
                 type="button"
@@ -4913,7 +5280,7 @@ function ExamsPanel({
                 type="submit"
                 className="flex-1 py-2.5 rounded-xl bg-primary text-primary-foreground font-semibold text-sm hover:opacity-90 transition-opacity"
               >
-                {editingId ? "Save Changes" : "Add Exam"}
+                {editingId ? "Save Changes" : "Add Event"}
               </button>
             </div>
           </form>
@@ -6265,6 +6632,10 @@ export default function App() {
     userStorageKey("qs_scores", sessionUserId),
     [],
   );
+  const [pastPaperScores, setPastPaperScoresRaw] = useLocalStorage<PastPaperScoreEntry[]>(
+    userStorageKey("qs_past_paper_scores", sessionUserId),
+    [],
+  );
   const [tasks, setTasksRaw] = useLocalStorage<Task[]>(
     userStorageKey("qs_tasks", sessionUserId),
     [],
@@ -6289,6 +6660,7 @@ export default function App() {
   const setSelectedSubjects = (s: SelectedSubject[]) =>
     setSelectedSubjectsRaw(s);
   const setScores = (s: ScoreEntry[]) => setScoresRaw(s);
+  const setPastPaperScores = (entries: PastPaperScoreEntry[]) => setPastPaperScoresRaw(entries);
   const setTasks = (t: Task[]) => setTasksRaw(t);
   const setExamDates = (e: ExamDate[]) => setExamDatesRaw(e);
   const setNotes = (n: NoteFile[]) => setNotesRaw(n);
@@ -6320,6 +6692,9 @@ export default function App() {
       if (Array.isArray(data.scores)) {
         setScoresRaw(data.scores as ScoreEntry[]);
       }
+      if (Array.isArray(data.pastPaperScores)) {
+        setPastPaperScoresRaw(data.pastPaperScores as PastPaperScoreEntry[]);
+      }
       if (Array.isArray(data.tasks)) {
         setTasksRaw(data.tasks as Task[]);
       }
@@ -6344,7 +6719,7 @@ export default function App() {
     return () => {
       isMounted = false;
     };
-  }, [sessionUserId, setSelectedSubjectsRaw, setScoresRaw, setTasksRaw, setExamDatesRaw, setNotesRaw, setRecommendationsRaw, setAccessibility, setDarkMode]);
+  }, [sessionUserId, setSelectedSubjectsRaw, setScoresRaw, setPastPaperScoresRaw, setTasksRaw, setExamDatesRaw, setNotesRaw, setRecommendationsRaw, setAccessibility, setDarkMode]);
 
   useEffect(() => {
     if (!firebaseConfigured || !currentUser) return;
@@ -6353,6 +6728,7 @@ export default function App() {
       await saveStudyData(currentUser.id, {
         selectedSubjects,
         scores,
+        pastPaperScores,
         tasks,
         examDates,
         notes,
@@ -6363,7 +6739,7 @@ export default function App() {
     };
 
     void syncUserData();
-  }, [currentUser, selectedSubjects, scores, tasks, examDates, notes, recommendations, accessibility, darkMode]);
+  }, [currentUser, selectedSubjects, scores, pastPaperScores, tasks, examDates, notes, recommendations, accessibility, darkMode]);
 
   useEffect(() => {
     if (sessionUserId) {
@@ -6643,6 +7019,13 @@ export default function App() {
                 <ScoreTracker
                   scores={scores}
                   setScores={setScores}
+                  selectedSubjects={selectedSubjects}
+                />
+              )}
+              {view === "pastPaperTracker" && (
+                <PastPaperTracker
+                  entries={pastPaperScores}
+                  setEntries={setPastPaperScores}
                   selectedSubjects={selectedSubjects}
                 />
               )}
