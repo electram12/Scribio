@@ -1,4 +1,4 @@
-import { handleExamMarker } from "./exam-marker-handler";
+import { handleExamMarker } from "./exam-marker-handler.js";
 
 interface ApiRequest {
   method?: string;
