@@ -182,7 +182,7 @@ export async function handleExamMarker(
     });
     const marksValid = (result.score === null || (typeof result.score === "number" && result.score >= 0))
       && (result.maxMarks === null || (typeof result.maxMarks === "number" && result.maxMarks > 0))
-      &&(Number(result.score) <= null || typeof result.maxMarks === "number" && Number(result.score) <= result.maxMarks)
+      &&(result.maxMarks === null || Number(result.score) <= result.maxMarks)
 
     const invalidFields = [
       ...requiredArrays.filter((key) => !Array.isArray(result[key])),
