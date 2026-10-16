@@ -47,7 +47,8 @@ export async function signUpWithPassword(email: string, password: string) {
 
 export async function signOutUser() {
   if (!supabase) return;
-  await supabase.auth.signOut();
+  const { error } = await supabase.auth.signOut();
+  if (error) throw error;
 }
 
 export async function upsertProfile(

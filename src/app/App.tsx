@@ -1,3 +1,5 @@
+
+
 import {
   useState,
   useEffect,
@@ -80,6 +82,7 @@ import "react-image-crop/dist/ReactCrop.css";
 import {
   firebaseConfigured,
   firebaseAuth,
+  signOutUser,
   loadStudyData,
   loadUserProfile,
   saveStudyData,
@@ -665,13 +668,29 @@ function AccessGate({
         const user = userCredential.user;
         const profile = await loadUserProfile(user.uid);
 
+        if (profile?.status !== "approved") {
+          try {
+            await signOutUser();
+          } catch (error) {
+            console.error("Failed to sign out unapproved user:", error);
+            setLoginError(
+              "Your request is still pending approval. We couldn't sign you out; please try again.",
+            );
+            return;
+          }
+          setLoginError(
+            "Your request is still pending approval. Please check back soon.",
+          );
+          return;
+        }
+
         const approvedUser: AppUser = {
           id: user.uid,
           name: profile?.name ?? user.email?.split("@")[0] ?? "Student",
           email: user.email ?? email,
           school: profile?.school ?? "",
           passwordHash: simpleHash(loginPassword),
-          status: (profile?.status as UserStatus | undefined) ?? "approved",
+          status: "approved",
           requestDate: profile?.requestDate ?? todayStr(),
         };
 
@@ -1427,9 +1446,6 @@ function AdminPanel({
   async function updateStatus(id: string, status: UserStatus) {
     const u = users.find((x) => x.id === id);
     if (!u) return;
-    setUsers(
-      users.map((x) => (x.id === id ? { ...x, status } : x)),
-    );
     setSending(id);
     try {
       if (firebaseConfigured) {
@@ -1442,6 +1458,17 @@ function AdminPanel({
           requestDate: u.requestDate,
         });
       }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown database error.";
+      showToast(`Failed to update ${u.name}'s status: ${message}`, false);
+      setSending(null);
+      return;
+    }
+
+    setUsers(
+      users.map((x) => (x.id === id ? { ...x, status } : x)),
+    );
+    try {
       await sendDecisionEmail(u, status);
       setEmailFailures((previous) => {
         const next = { ...previous };
@@ -6596,15 +6623,21 @@ export default function App() {
           return;
         }
 
-        setSessionUserId(user.uid);
         const profile = await loadUserProfile(user.uid);
+        if (!isMounted) return;
+
+        if (profile?.status !== "approved") {
+          setSessionUserId("");
+          return;
+        }
+
         const nextUser: AppUser = {
           id: user.uid,
           name: profile?.name ?? user.email?.split("@")[0] ?? "Student",
           email: user.email ?? "",
           school: profile?.school ?? "",
           passwordHash: profile?.passwordHash ?? simpleHash(""),
-          status: (profile?.status as UserStatus | undefined) ?? "approved",
+          status: "approved",
           requestDate: profile?.requestDate ?? todayStr(),
         };
 
@@ -6613,6 +6646,7 @@ export default function App() {
           map.set(nextUser.id, nextUser);
           return [...map.values()];
         });
+        setSessionUserId(user.uid);
       });
 
       return () => {
