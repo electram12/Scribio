@@ -56,7 +56,7 @@ function examMarkerApi() {
 export default defineConfig(({ mode }) => {
   const appEnv = loadEnv(mode, process.cwd(), '')
   return {
-  envDir: path.resolve(__dirname, ".vscode"),
+  envDir: __dirname,
   define: {
     'import.meta.env.VITE_FIREBASE_API_KEY': JSON.stringify(appEnv.VITE_FIREBASE_API_KEY || ''),
     'import.meta.env.VITE_FIREBASE_AUTH_DOMAIN': JSON.stringify(appEnv.VITE_FIREBASE_AUTH_DOMAIN || ''),

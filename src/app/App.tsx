@@ -89,7 +89,7 @@ import {
   fetchUserProfiles,
   signInWithPassword,
   signUpWithPassword,
-  upsertProfile,
+  updateUserProfileStatus,
 } from "../lib/firebase";
 
 // ─── TYPES ────────────────────────────────────────────────────────────────────
@@ -195,8 +195,6 @@ interface NoteFile {
 }
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const ADMIN_PASSWORD = "Scribio@2026";
-
 const SUBJECTS_LIST = [
   "Accounting",
   "Administration & IT",
@@ -395,6 +393,19 @@ function userStorageKey(prefix: string, userId?: string) {
   return userId ? `${prefix}_${userId}` : `${prefix}_guest`;
 }
 
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
 function useLocalStorage<T>(
   key: string,
   initial: T,
@@ -422,6 +433,16 @@ function useLocalStorage<T>(
     },
     [key],
   );
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(key);
+      setVal(stored ? JSON.parse(stored) : initial);
+    } catch {
+      setVal(initial);
+    }
+  }, [key]);
+
   return [val, set];
 }
 
@@ -637,7 +658,8 @@ function AccessGate({
   const [showReqConfirm, setShowReqConfirm] = useState(false);
   const [reqDone, setReqDone] = useState(false);
   const [reqError, setReqError] = useState("");
-  const [adminPass, setAdminPass] = useState("");
+  const [adminEmail, setAdminEmail] = useState("");
+  const [adminPassword, setAdminPassword] = useState("");
   const [adminError, setAdminError] = useState("");
 
   function switchTab(t: "login" | "request" | "admin") {
@@ -808,7 +830,10 @@ function AccessGate({
 
     if (firebaseConfigured && firebaseAuth) {
       try {
-        const userCredential = await signUpWithPassword(email, reqPassword);
+        const userCredential = await signUpWithPassword(email, reqPassword, {
+          name: reqName.trim(),
+          school: reqSchool.trim(),
+        });
         const user = userCredential.user;
         const newUser: AppUser = {
           id: user.uid,
@@ -819,15 +844,6 @@ function AccessGate({
           status: "pending",
           requestDate: todayStr(),
         };
-
-        await upsertProfile(user.uid, {
-          name: newUser.name,
-          email: newUser.email,
-          school: newUser.school,
-          passwordHash: newUser.passwordHash,
-          status: newUser.status,
-          requestDate: newUser.requestDate,
-        });
 
         setUsers([...users, newUser]);
         setReqDone(true);
@@ -852,13 +868,42 @@ function AccessGate({
     setReqDone(true);
   }
 
-  function handleAdminLogin(e: React.FormEvent) {
+  async function handleAdminLogin(e: React.FormEvent) {
     e.preventDefault();
-    if (adminPass === ADMIN_PASSWORD) {
+    if (!firebaseConfigured) {
+      setAdminError("Supabase is not configured. Admin sign-in is unavailable.");
+      return;
+    }
+
+    let signedIn = false;
+    try {
+      const credential = await signInWithPassword(
+        adminEmail.trim().toLowerCase(),
+        adminPassword,
+      );
+      signedIn = true;
+      const profile = await loadUserProfile(credential.user.uid);
+      if (profile?.status !== "approved" || profile.role !== "admin") {
+        await signOutUser();
+        setAdminError("This Supabase account does not have approved admin access.");
+        return;
+      }
       setAdminError("");
       onAdmin();
-    } else {
-      setAdminError("Incorrect password. Please try again.");
+    } catch (error) {
+      if (signedIn) {
+        try {
+          await signOutUser();
+        } catch (signOutError) {
+          console.error("Failed to sign out non-admin account:", signOutError);
+        }
+      }
+      const message = error instanceof Error ? error.message : "Unable to sign in.";
+      setAdminError(
+        message.includes("Invalid login credentials")
+          ? "Incorrect email or password."
+          : "Unable to verify admin access. Check your connection and try again.",
+      );
     }
   }
 
@@ -1254,19 +1299,36 @@ function AccessGate({
               >
                 <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/60 px-3 py-2.5 text-sm font-semibold text-foreground">
                   <Shield className="w-4 h-4 shrink-0 text-primary" />
-                  Admin access only
+                  Sign in with your approved Supabase admin account
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold mb-1 text-foreground">
+                    Admin Email
+                  </label>
+                  <input
+                    value={adminEmail}
+                    onChange={(e) =>
+                      setAdminEmail(e.target.value)
+                    }
+                    type="email"
+                    required
+                    autoComplete="username"
+                    placeholder="Enter admin email"
+                    className={inputCls}
+                  />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold mb-1 text-foreground">
                     Admin Password
                   </label>
                   <input
-                    value={adminPass}
+                    value={adminPassword}
                     onChange={(e) =>
-                      setAdminPass(e.target.value)
+                      setAdminPassword(e.target.value)
                     }
                     type="password"
                     required
+                    autoComplete="current-password"
                     placeholder="Enter admin password"
                     className={inputCls}
                   />
@@ -1318,7 +1380,8 @@ function AdminPanel({
   } | null>(null);
   const [sending, setSending] = useState<string | null>(null);
   const [emailFailures, setEmailFailures] = useState<Record<string, UserStatus>>({});
-  const [refreshTick, setRefreshTick] = useState(0);
+  const [profilesLoading, setProfilesLoading] = useState(true);
+  const [profileLoadError, setProfileLoadError] = useState("");
   const [emailJsConfig, setEmailJsConfig] = useLocalStorage("scribio_emailjs_config", {
     serviceId: "",
     templateId: "",
@@ -1329,38 +1392,33 @@ function AdminPanel({
     emailJsConfig.serviceId && emailJsConfig.templateId && emailJsConfig.publicKey,
   );
 
+  const refreshProfiles = useCallback(async () => {
+    try {
+      const profiles = await fetchUserProfiles();
+      setUsers(profiles.filter((profile) => profile.role !== "admin").map((profile) => ({
+        id: profile.id,
+        name: profile.name,
+        email: profile.email,
+        school: profile.school,
+        passwordHash: profile.passwordHash ?? simpleHash(""),
+        status: profile.status,
+        requestDate: profile.requestDate || todayStr(),
+      })));
+      setProfileLoadError("");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown database error.";
+      console.error("Failed to refresh admin user list:", error);
+      setProfileLoadError(`Could not load Supabase user requests: ${message}`);
+    } finally {
+      setProfilesLoading(false);
+    }
+  }, [setUsers]);
+
   useEffect(() => {
-    if (!firebaseConfigured) return;
-
-    let isMounted = true;
-    const interval = setInterval(async () => {
-      try {
-        const freshProfiles = await fetchUserProfiles();
-        if (!isMounted) return;
-
-        const mapped = freshProfiles.map((profile) => ({
-          id: profile.id,
-          name: profile.name,
-          email: profile.email,
-          school: profile.school,
-          passwordHash: profile.passwordHash ?? simpleHash(""),
-          status: profile.status,
-          requestDate: profile.requestDate || todayStr(),
-        }));
-
-        if (mapped.length !== users.length || mapped.some((item) => !users.some((existing) => existing.id === item.id && existing.status === item.status))) {
-          setUsers(mapped);
-        }
-      } catch (error) {
-        console.warn("Failed to refresh admin user list:", error);
-      }
-    }, 6000);
-
-    return () => {
-      isMounted = false;
-      clearInterval(interval);
-    };
-  }, [firebaseConfigured, users, setUsers]);
+    void refreshProfiles();
+    const interval = setInterval(() => void refreshProfiles(), 6000);
+    return () => clearInterval(interval);
+  }, [refreshProfiles]);
 
   const pending = [...users]
     .filter((u) => u.status === "pending")
@@ -1452,16 +1510,7 @@ function AdminPanel({
     if (!u) return;
     setSending(id);
     try {
-      if (firebaseConfigured) {
-        await upsertProfile(id, {
-          name: u.name,
-          email: u.email,
-          school: u.school,
-          passwordHash: u.passwordHash,
-          status,
-          requestDate: u.requestDate,
-        });
-      }
+      await updateUserProfileStatus(id, status);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown database error.";
       showToast(`Failed to update ${u.name}'s status: ${message}`, false);
@@ -1487,10 +1536,6 @@ function AdminPanel({
     } finally {
       setSending(null);
     }
-  }
-
-  function deleteUser(id: string) {
-    setUsers(users.filter((u) => u.id !== id));
   }
 
   const statusBadge = (s: UserStatus) => {
@@ -1639,8 +1684,7 @@ function AdminPanel({
                 User Access Requests
               </h2>
               <p className="text-xs text-muted-foreground mt-0.5">
-                All records are stored in localStorage and
-                persist across sessions.
+                Requests are loaded from Supabase and refresh automatically.
               </p>
             </div>
             <span className="text-xs text-muted-foreground font-medium">
@@ -1649,7 +1693,15 @@ function AdminPanel({
             </span>
           </div>
 
-          {users.length === 0 ? (
+          {profileLoadError ? (
+            <p className="m-4 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+              {profileLoadError}
+            </p>
+          ) : profilesLoading && users.length === 0 ? (
+            <p className="p-12 text-center text-sm text-muted-foreground">
+              Loading user requests from Supabase…
+            </p>
+          ) : users.length === 0 ? (
             <div className="p-12 text-center">
               <User className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
               <p className="text-muted-foreground text-sm font-medium">
@@ -1761,13 +1813,6 @@ function AdminPanel({
                               <Mail className="h-3 w-3" /> Retry email
                             </button>
                           )}
-                          <button
-                            type="button"
-                            onClick={() => deleteUser(u.id)}
-                            className="p-1.5 rounded-lg border border-border text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
                         </div>
                       </td>
                     </tr>
@@ -1822,7 +1867,7 @@ function AdminPanel({
           <Mail className="w-4 h-4 text-primary shrink-0 mt-0.5" />
           <div>
             <p className="text-foreground text-xs font-semibold">
-              Account decisions are stored locally
+              Account decisions are stored in Supabase and shared across devices.
             </p>
           </div>
         </div>
@@ -6592,86 +6637,91 @@ export default function App() {
   const [sessionUserId, setSessionUserId] =
     useLocalStorage<string>("qs_session_uid", "");
   const [verifiedAuthUserId, setVerifiedAuthUserId] = useState("");
+  const [studyDataLoadedUserId, setStudyDataLoadedUserId] = useState("");
+  const [studyDataLoadError, setStudyDataLoadError] = useState("");
+  const [studyDataSyncError, setStudyDataSyncError] = useState("");
+  const [studyDataReload, setStudyDataReload] = useState(0);
+  const [studyDataSaveRetry, setStudyDataSaveRetry] = useState(0);
+  const lastSyncedStudyDataRef = useRef("");
+  const lastRemoteStudyDataUpdatedAtRef = useRef("");
+  const studyDataSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const currentStudyDataUserIdRef = useRef("");
 
   useEffect(() => {
-    if (!firebaseConfigured) return;
+    if (!firebaseConfigured || !firebaseAuth) return;
 
     let isMounted = true;
+    const unsubscribe = firebaseAuth.onIdTokenChanged(async (user) => {
+      if (!user) {
+        setVerifiedAuthUserId("");
+        setSessionUserId("");
+        setCurrentUser(null);
+        setScreen("access");
+        return;
+      }
 
-    async function syncRemoteUsers() {
-      const remoteUsers = await fetchUserProfiles();
+      let profile: Awaited<ReturnType<typeof loadUserProfile>>;
+      try {
+        profile = await loadUserProfile(user.uid);
+      } catch (error) {
+        if (!isMounted) return;
+        console.error("Failed to verify the signed-in user's profile:", error);
+        setVerifiedAuthUserId("");
+        setSessionUserId("");
+        setCurrentUser(null);
+        setScreen("access");
+        try {
+          await signOutUser();
+        } catch (signOutError) {
+          console.error("Failed to sign out user with an unverified profile:", signOutError);
+        }
+        return;
+      }
       if (!isMounted) return;
 
-      const mapped = remoteUsers.map((profile) => ({
-        id: profile.id,
-        name: profile.name,
-        email: profile.email,
-        school: profile.school,
-        passwordHash: profile.passwordHash ?? simpleHash(""),
-        status: profile.status,
-        requestDate: profile.requestDate || todayStr(),
-      }));
+      if (profile?.status !== "approved") {
+        setVerifiedAuthUserId("");
+        setSessionUserId("");
+        setCurrentUser(null);
+        setScreen("access");
+        try {
+          await signOutUser();
+        } catch (error) {
+          console.error("Failed to sign out unapproved user:", error);
+        }
+        return;
+      }
+
+      if (profile.role === "admin") {
+        setVerifiedAuthUserId("");
+        setSessionUserId("");
+        setCurrentUser(null);
+        setScreen("admin");
+        return;
+      }
+
+      const nextUser: AppUser = {
+        id: user.uid,
+        name: profile.name ?? user.email?.split("@")[0] ?? "Student",
+        email: user.email ?? "",
+        school: profile.school ?? "",
+        passwordHash: simpleHash(""),
+        status: "approved",
+        requestDate: profile.requestDate ?? todayStr(),
+      };
 
       setUsersRaw((previous) => {
         const map = new Map(previous.map((item) => [item.id, item]));
-        mapped.forEach((item) => map.set(item.id, item));
+        map.set(nextUser.id, nextUser);
         return [...map.values()];
       });
-    }
-
-    void syncRemoteUsers();
-
-    if (firebaseAuth) {
-      const unsubscribe = firebaseAuth.onIdTokenChanged(async (user) => {
-        if (!user) {
-          setVerifiedAuthUserId("");
-          setSessionUserId("");
-          return;
-        }
-
-        const profile = await loadUserProfile(user.uid);
-        if (!isMounted) return;
-
-        if (profile?.status !== "approved") {
-          setVerifiedAuthUserId("");
-          setSessionUserId("");
-          setCurrentUser(null);
-          setScreen("access");
-          try {
-            await signOutUser();
-          } catch (error) {
-            console.error("Failed to sign out unapproved user:", error);
-          }
-          return;
-        }
-
-        const nextUser: AppUser = {
-          id: user.uid,
-          name: profile?.name ?? user.email?.split("@")[0] ?? "Student",
-          email: user.email ?? "",
-          school: profile?.school ?? "",
-          passwordHash: profile?.passwordHash ?? simpleHash(""),
-          status: "approved",
-          requestDate: profile?.requestDate ?? todayStr(),
-        };
-
-        setUsersRaw((previous) => {
-          const map = new Map(previous.map((item) => [item.id, item]));
-          map.set(nextUser.id, nextUser);
-          return [...map.values()];
-        });
-        setVerifiedAuthUserId(user.uid);
-        setSessionUserId(user.uid);
-      });
-
-      return () => {
-        isMounted = false;
-        unsubscribe();
-      };
-    }
+      setVerifiedAuthUserId(user.uid);
+      setSessionUserId(user.uid);
+    });
 
     return () => {
       isMounted = false;
+      unsubscribe();
     };
   }, [setUsersRaw, setSessionUserId]);
 
@@ -6705,7 +6755,7 @@ export default function App() {
     { fontScale: 100, fontFamily: "default", colour: "default", highContrast: false },
   );
 
-  const setUsers = (u: AppUser[]) => setUsersRaw(u);
+  const setUsers = useCallback((u: AppUser[]) => setUsersRaw(u), [setUsersRaw]);
   const setSelectedSubjects = (s: SelectedSubject[]) =>
     setSelectedSubjectsRaw(s);
   const setScores = (s: ScoreEntry[]) => setScoresRaw(s);
@@ -6714,6 +6764,22 @@ export default function App() {
   const setExamDates = (e: ExamDate[]) => setExamDatesRaw(e);
   const setNotes = (n: NoteFile[]) => setNotesRaw(n);
   const setRecommendations = (r: Recommendation[]) => setRecommendationsRaw(r);
+
+  const studyData = {
+    selectedSubjects,
+    scores,
+    pastPaperScores,
+    tasks,
+    examDates,
+    notes,
+    recommendations,
+    accessibility,
+    darkMode,
+  };
+  const serializedStudyData = stableStringify(studyData);
+  const studyDataRef = useRef(studyData);
+  studyDataRef.current = studyData;
+  currentStudyDataUserIdRef.current = currentUser?.id ?? "";
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", darkMode);
@@ -6727,40 +6793,64 @@ export default function App() {
   }, [accessibility.fontScale]);
 
   useEffect(() => {
-    if (!firebaseConfigured || !sessionUserId) return;
+    if (!firebaseConfigured || !sessionUserId) {
+      setStudyDataLoadedUserId("");
+      setStudyDataLoadError("");
+      return;
+    }
 
+    const userId = sessionUserId;
     let isMounted = true;
 
     async function hydrateUserData() {
-      const data = await loadStudyData(sessionUserId);
-      if (!isMounted || !data) return;
+      setStudyDataLoadedUserId("");
+      setStudyDataLoadError("");
+      setStudyDataSyncError("");
+      try {
+        const remote = await loadStudyData(userId);
+        if (!isMounted) return;
+        if (remote) {
+          const data = { ...studyDataRef.current, ...remote.value };
+          lastSyncedStudyDataRef.current = stableStringify(data);
+          lastRemoteStudyDataUpdatedAtRef.current = remote.updatedAt;
 
-      if (Array.isArray(data.selectedSubjects)) {
-        setSelectedSubjectsRaw(data.selectedSubjects as SelectedSubject[]);
-      }
-      if (Array.isArray(data.scores)) {
-        setScoresRaw(data.scores as ScoreEntry[]);
-      }
-      if (Array.isArray(data.pastPaperScores)) {
-        setPastPaperScoresRaw(data.pastPaperScores as PastPaperScoreEntry[]);
-      }
-      if (Array.isArray(data.tasks)) {
-        setTasksRaw(data.tasks as Task[]);
-      }
-      if (Array.isArray(data.examDates)) {
-        setExamDatesRaw(data.examDates as ExamDate[]);
-      }
-      if (Array.isArray(data.notes)) {
-        setNotesRaw(data.notes as NoteFile[]);
-      }
-      if (Array.isArray(data.recommendations)) {
-        setRecommendationsRaw(data.recommendations as Recommendation[]);
-      }
-      if (data.accessibility) {
-        setAccessibility(data.accessibility as AccessibilitySettings);
-      }
-      if (typeof data.darkMode === "boolean") {
-        setDarkMode(data.darkMode);
+          if (Array.isArray(data.selectedSubjects)) {
+            setSelectedSubjectsRaw(data.selectedSubjects as SelectedSubject[]);
+          }
+          if (Array.isArray(data.scores)) {
+            setScoresRaw(data.scores as ScoreEntry[]);
+          }
+          if (Array.isArray(data.pastPaperScores)) {
+            setPastPaperScoresRaw(data.pastPaperScores as PastPaperScoreEntry[]);
+          }
+          if (Array.isArray(data.tasks)) {
+            setTasksRaw(data.tasks as Task[]);
+          }
+          if (Array.isArray(data.examDates)) {
+            setExamDatesRaw(data.examDates as ExamDate[]);
+          }
+          if (Array.isArray(data.notes)) {
+            setNotesRaw(data.notes as NoteFile[]);
+          }
+          if (Array.isArray(data.recommendations)) {
+            setRecommendationsRaw(data.recommendations as Recommendation[]);
+          }
+          if (data.accessibility) {
+            setAccessibility(data.accessibility as AccessibilitySettings);
+          }
+          if (typeof data.darkMode === "boolean") {
+            setDarkMode(data.darkMode);
+          }
+        } else {
+          lastSyncedStudyDataRef.current = "";
+          lastRemoteStudyDataUpdatedAtRef.current = "";
+        }
+        setStudyDataLoadedUserId(userId);
+      } catch (error) {
+        if (!isMounted) return;
+        const message = error instanceof Error ? error.message : "Unknown database error.";
+        console.error("Failed to load saved study data:", error);
+        setStudyDataLoadError(`Could not load your saved progress: ${message}`);
       }
     }
 
@@ -6768,27 +6858,105 @@ export default function App() {
     return () => {
       isMounted = false;
     };
-  }, [sessionUserId, setSelectedSubjectsRaw, setScoresRaw, setPastPaperScoresRaw, setTasksRaw, setExamDatesRaw, setNotesRaw, setRecommendationsRaw, setAccessibility, setDarkMode]);
+  }, [sessionUserId, studyDataReload, setSelectedSubjectsRaw, setScoresRaw, setPastPaperScoresRaw, setTasksRaw, setExamDatesRaw, setNotesRaw, setRecommendationsRaw, setAccessibility, setDarkMode]);
 
   useEffect(() => {
-    if (!firebaseConfigured || !currentUser) return;
+    if (
+      !firebaseConfigured ||
+      !currentUser ||
+      studyDataLoadedUserId !== currentUser.id ||
+      serializedStudyData === lastSyncedStudyDataRef.current
+    ) return;
 
-    const syncUserData = async () => {
-      await saveStudyData(currentUser.id, {
-        selectedSubjects,
-        scores,
-        pastPaperScores,
-        tasks,
-        examDates,
-        notes,
-        recommendations,
-        accessibility,
-        darkMode,
+    const userId = currentUser.id;
+    const dataToSave = studyData;
+    const timeout = setTimeout(() => {
+      studyDataSaveQueueRef.current = studyDataSaveQueueRef.current.then(async () => {
+        try {
+          const result = await saveStudyData(userId, dataToSave);
+          if (currentStudyDataUserIdRef.current === userId) {
+            lastSyncedStudyDataRef.current = serializedStudyData;
+            if (result) lastRemoteStudyDataUpdatedAtRef.current = result.updatedAt;
+            setStudyDataSyncError("");
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unknown database error.";
+          console.error("Failed to save study data to Supabase:", error);
+          if (currentStudyDataUserIdRef.current === userId) {
+            setStudyDataSyncError(`Your progress could not be saved: ${message}`);
+            window.setTimeout(() => setStudyDataSaveRetry((retry) => retry + 1), 5000);
+          }
+        }
       });
-    };
+    }, 400);
 
-    void syncUserData();
-  }, [currentUser, selectedSubjects, scores, pastPaperScores, tasks, examDates, notes, recommendations, accessibility, darkMode]);
+    return () => clearTimeout(timeout);
+  }, [
+    currentUser?.id,
+    studyDataLoadedUserId,
+    serializedStudyData,
+    studyDataSaveRetry,
+  ]);
+
+  useEffect(() => {
+    const userId = currentUser?.id;
+    if (
+      !firebaseConfigured ||
+      !userId ||
+      studyDataLoadedUserId !== userId
+    ) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const remote = await loadStudyData(userId);
+        if (!remote || currentStudyDataUserIdRef.current !== userId) return;
+        setStudyDataSyncError("");
+        if (remote.updatedAt === lastRemoteStudyDataUpdatedAtRef.current) return;
+
+        const localSerialized = stableStringify(studyDataRef.current);
+        if (localSerialized !== lastSyncedStudyDataRef.current) return;
+
+        const nextData = { ...studyDataRef.current, ...remote.value };
+        const serializedRemoteData = stableStringify(nextData);
+        lastRemoteStudyDataUpdatedAtRef.current = remote.updatedAt;
+        if (serializedRemoteData === localSerialized) {
+          lastSyncedStudyDataRef.current = serializedRemoteData;
+          return;
+        }
+
+        lastSyncedStudyDataRef.current = serializedRemoteData;
+        setSelectedSubjectsRaw(nextData.selectedSubjects as SelectedSubject[]);
+        setScoresRaw(nextData.scores as ScoreEntry[]);
+        setPastPaperScoresRaw(nextData.pastPaperScores as PastPaperScoreEntry[]);
+        setTasksRaw(nextData.tasks as Task[]);
+        setExamDatesRaw(nextData.examDates as ExamDate[]);
+        setNotesRaw(nextData.notes as NoteFile[]);
+        setRecommendationsRaw(nextData.recommendations as Recommendation[]);
+        setAccessibility(nextData.accessibility as AccessibilitySettings);
+        setDarkMode(nextData.darkMode as boolean);
+        setStudyDataSyncError("");
+      } catch (error) {
+        if (currentStudyDataUserIdRef.current !== userId) return;
+        const message = error instanceof Error ? error.message : "Unknown database error.";
+        console.error("Failed to refresh study data from Supabase:", error);
+        setStudyDataSyncError(`Sync is temporarily unavailable: ${message}`);
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [
+    currentUser?.id,
+    studyDataLoadedUserId,
+    setSelectedSubjectsRaw,
+    setScoresRaw,
+    setPastPaperScoresRaw,
+    setTasksRaw,
+    setExamDatesRaw,
+    setNotesRaw,
+    setRecommendationsRaw,
+    setAccessibility,
+    setDarkMode,
+  ]);
 
   useEffect(() => {
     if (firebaseConfigured && verifiedAuthUserId !== sessionUserId) return;
@@ -6866,6 +7034,15 @@ export default function App() {
     setScreen("access");
   }
 
+  async function handleAdminBack() {
+    try {
+      await signOutUser();
+      setScreen("access");
+    } catch (error) {
+      console.error("Failed to sign out admin:", error);
+    }
+  }
+
   function navigateTo(v: View) {
     setView(v);
     setShowSubjectManager(false);
@@ -6891,10 +7068,41 @@ export default function App() {
         users={users}
         setUsers={setUsers}
         recommendations={recommendations}
-        onBack={() => setScreen("access")}
+        onBack={() => void handleAdminBack()}
         darkMode={darkMode}
         toggleDark={() => setDarkMode((current) => !current)}
       />
+    );
+  }
+
+  if (
+    firebaseConfigured &&
+    currentUser &&
+    studyDataLoadedUserId !== currentUser.id
+  ) {
+    return (
+      <div className="min-h-screen bg-background text-foreground flex items-center justify-center p-6">
+        <div className="max-w-md text-center">
+          {studyDataLoadError ? (
+            <>
+              <p className="text-sm text-destructive mb-4" role="alert">
+                {studyDataLoadError}
+              </p>
+              <button
+                type="button"
+                onClick={() => setStudyDataReload((count) => count + 1)}
+                className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground"
+              >
+                Retry loading saved progress
+              </button>
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Loading your saved progress from Supabase…
+            </p>
+          )}
+        </div>
+      </div>
     );
   }
 
@@ -7034,6 +7242,14 @@ export default function App() {
         </div>
 
         <div className="flex-1 overflow-y-auto">
+          {studyDataSyncError && (
+            <p
+              className="m-4 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-200"
+              role="alert"
+            >
+              {studyDataSyncError}
+            </p>
+          )}
           {showSubjectManager ? (
             <div>
               <div className="px-6 pt-4">

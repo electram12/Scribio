@@ -4,7 +4,7 @@ import {
   signInWithPassword as supabaseSignIn,
   signUpWithPassword as supabaseSignUp,
   signOutUser,
-  upsertProfile as supabaseUpsertProfile,
+  updateUserProfileStatus as supabaseUpdateUserProfileStatus,
   loadUserProfile,
   saveStudyData,
   loadStudyData,
@@ -12,14 +12,6 @@ import {
 } from "./supabase";
 
 type FirebaseCompatUser = { uid: string; email?: string | null };
-type FirebaseProfileInput = {
-  name: string;
-  email: string;
-  school: string;
-  passwordHash: string;
-  status: "pending" | "approved" | "denied";
-  requestDate: string;
-};
 
 export const firebaseConfigured = supabaseConfigured;
 export const firebaseAuth = supabase
@@ -43,8 +35,12 @@ export async function signInWithPassword(email: string, password: string) {
   return { user: { uid: user.id, email: user.email } };
 }
 
-export async function signUpWithPassword(email: string, password: string) {
-  const { user } = await supabaseSignUp(email, password);
+export async function signUpWithPassword(
+  email: string,
+  password: string,
+  profile: { name: string; school: string },
+) {
+  const { user } = await supabaseSignUp(email, password, profile);
   if (!user) throw new Error("Supabase did not create a user.");
   return { user: { uid: user.id, email: user.email } };
 }
@@ -69,6 +65,9 @@ export async function fetchUserProfiles() {
   return supabase ? supabaseFetchUserProfiles() : [];
 }
 
-export function upsertProfile(userId: string, profile: FirebaseProfileInput) {
-  return supabaseUpsertProfile(userId, profile);
+export function updateUserProfileStatus(
+  userId: string,
+  status: "pending" | "approved" | "denied",
+) {
+  return supabaseUpdateUserProfileStatus(userId, status);
 }
