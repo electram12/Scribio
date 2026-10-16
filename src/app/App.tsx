@@ -679,7 +679,11 @@ function AccessGate({
             return;
           }
           setLoginError(
-            "Your request is still pending approval. Please check back soon.",
+            profile?.status === "denied"
+              ? "Your access request was denied. Please contact the administrator if you have questions."
+              : profile?.status === "pending"
+                ? "Your request is still pending approval. Please check back soon."
+                : "We couldn't verify your approval status. Please try again later.",
           );
           return;
         }
@@ -6587,6 +6591,7 @@ export default function App() {
   );
   const [sessionUserId, setSessionUserId] =
     useLocalStorage<string>("qs_session_uid", "");
+  const [verifiedAuthUserId, setVerifiedAuthUserId] = useState("");
 
   useEffect(() => {
     if (!firebaseConfigured) return;
@@ -6619,6 +6624,7 @@ export default function App() {
     if (firebaseAuth) {
       const unsubscribe = firebaseAuth.onIdTokenChanged(async (user) => {
         if (!user) {
+          setVerifiedAuthUserId("");
           setSessionUserId("");
           return;
         }
@@ -6627,7 +6633,15 @@ export default function App() {
         if (!isMounted) return;
 
         if (profile?.status !== "approved") {
+          setVerifiedAuthUserId("");
           setSessionUserId("");
+          setCurrentUser(null);
+          setScreen("access");
+          try {
+            await signOutUser();
+          } catch (error) {
+            console.error("Failed to sign out unapproved user:", error);
+          }
           return;
         }
 
@@ -6646,6 +6660,7 @@ export default function App() {
           map.set(nextUser.id, nextUser);
           return [...map.values()];
         });
+        setVerifiedAuthUserId(user.uid);
         setSessionUserId(user.uid);
       });
 
@@ -6776,6 +6791,7 @@ export default function App() {
   }, [currentUser, selectedSubjects, scores, pastPaperScores, tasks, examDates, notes, recommendations, accessibility, darkMode]);
 
   useEffect(() => {
+    if (firebaseConfigured && verifiedAuthUserId !== sessionUserId) return;
     if (sessionUserId) {
       const u = users.find(
         (x) =>
@@ -6788,7 +6804,7 @@ export default function App() {
         );
       }
     }
-  }, [sessionUserId, users, selectedSubjects.length]);
+  }, [firebaseConfigured, verifiedAuthUserId, sessionUserId, users, selectedSubjects.length]);
 
   // Task notification checker (every 60s)
   useEffect(() => {
@@ -6831,6 +6847,7 @@ export default function App() {
 
   function handleApproved(u: AppUser) {
     setCurrentUser(u);
+    if (firebaseConfigured) setVerifiedAuthUserId(u.id);
     setSessionUserId(u.id);
     setScreen(
       selectedSubjects.length === 0 ? "onboarding" : "app",
