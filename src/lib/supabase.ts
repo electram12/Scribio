@@ -26,6 +26,23 @@ export type UserProfileRow = {
   requestDate: string;
 };
 
+export type ContactSubmissionType =
+  | "suggestion"
+  | "bug"
+  | "problem"
+  | "content"
+  | "other";
+
+export type ContactSubmission = {
+  id: string;
+  userId: string;
+  name: string;
+  email: string;
+  type: ContactSubmissionType;
+  message: string;
+  createdAt: string;
+};
+
 export async function signInWithPassword(email: string, password: string) {
   if (!supabase) {
     throw new Error("Supabase is not configured.");
@@ -159,4 +176,49 @@ export async function loadStudyData(
     value: (data.value as Record<string, unknown> | null) ?? {},
     updatedAt: data.updated_at,
   };
+}
+
+export async function createContactSubmission(submission: {
+  userId: string;
+  name: string;
+  email: string;
+  type: ContactSubmissionType;
+  message: string;
+}): Promise<void> {
+  if (!supabase) {
+    throw new Error("Supabase is not configured.");
+  }
+
+  const { error } = await supabase.from("contact_submissions").insert({
+    user_id: submission.userId,
+    name: submission.name,
+    email: submission.email,
+    type: submission.type,
+    message: submission.message,
+  });
+
+  if (error) throw error;
+}
+
+export async function fetchContactSubmissions(): Promise<ContactSubmission[]> {
+  if (!supabase) {
+    throw new Error("Supabase is not configured.");
+  }
+
+  const { data, error } = await supabase
+    .from("contact_submissions")
+    .select("id, user_id, name, email, type, message, created_at")
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+
+  return (data ?? []).map((submission) => ({
+    id: submission.id,
+    userId: submission.user_id,
+    name: submission.name,
+    email: submission.email,
+    type: submission.type as ContactSubmissionType,
+    message: submission.message,
+    createdAt: submission.created_at,
+  }));
 }

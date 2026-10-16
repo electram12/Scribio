@@ -20,8 +20,19 @@ create table if not exists public.user_app_data (
   unique (user_id, key)
 );
 
+create table if not exists public.contact_submissions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  name text not null check (char_length(btrim(name)) between 1 and 120),
+  email text not null default '' check (char_length(email) <= 254),
+  type text not null check (type in ('suggestion', 'bug', 'problem', 'content', 'other')),
+  message text not null check (char_length(btrim(message)) between 1 and 5000),
+  created_at timestamptz not null default now()
+);
+
 alter table public.user_profiles enable row level security;
 alter table public.user_app_data enable row level security;
+alter table public.contact_submissions enable row level security;
 
 create or replace function public.is_scribio_admin()
 returns boolean
@@ -88,10 +99,35 @@ create policy "Users update their own app data"
   using (user_id = (select auth.uid()))
   with check (user_id = (select auth.uid()));
 
+create policy "Approved users submit contact feedback"
+  on public.contact_submissions
+  for insert
+  to authenticated
+  with check (
+    user_id = (select auth.uid())
+    and exists (
+      select 1
+      from public.user_profiles
+      where id = (select auth.uid())
+        and status = 'approved'
+    )
+  );
+
+create policy "Admins read contact feedback"
+  on public.contact_submissions
+  for select
+  to authenticated
+  using ((select public.is_scribio_admin()));
+
 create index if not exists user_profiles_email_idx on public.user_profiles (email);
 create index if not exists user_app_data_user_id_idx on public.user_app_data (user_id);
+create index if not exists contact_submissions_created_at_idx
+  on public.contact_submissions (created_at desc);
+create index if not exists contact_submissions_user_id_idx
+  on public.contact_submissions (user_id);
 
 grant select on public.user_profiles to authenticated;
 grant update (status) on public.user_profiles to authenticated;
 grant select, insert, update on public.user_app_data to authenticated;
+grant select, insert on public.contact_submissions to authenticated;
 grant execute on function public.is_scribio_admin() to authenticated;

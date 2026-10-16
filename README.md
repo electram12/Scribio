@@ -9,6 +9,10 @@
 
   Run `npm run dev` to start the development server.
 
+  ## Contact Us feedback
+
+  Contact Us messages are stored in Supabase and linked to the signed-in account, so they remain associated with that account when it is used on another device. Apply `supabase/migrations/20261016210800_contact_submissions.sql` to the configured Supabase project before using this feature. Approved users can submit suggestions, bug reports, problems, content requests, or other feedback; only approved admins can read the submissions in the Admin Panel, which refreshes automatically.
+
   ## Admin decision emails
 
   Admin approval and denial notifications use EmailJS. After signing in as admin, enter the Service ID, Template ID, and Public Key in the EmailJS settings section and save them. These settings are stored in that browser's localStorage, so configure each browser that will send notifications.

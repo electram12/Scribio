@@ -80,6 +80,12 @@ import logoImg from "../imports/1000186272.png";
 import ReactCrop, { type Crop, type PixelCrop } from "react-image-crop";
 import "react-image-crop/dist/ReactCrop.css";
 import {
+  createContactSubmission,
+  fetchContactSubmissions,
+  type ContactSubmission,
+  type ContactSubmissionType,
+} from "../lib/supabase";
+import {
   firebaseConfigured,
   firebaseAuth,
   signOutUser,
@@ -134,14 +140,6 @@ interface ScoreEntry {
   type: "Practice" | "Test" | "Prelim" | "Past Paper" | "Exam";
   notes: string;
   improvementNotes?: string;
-}
-interface Recommendation {
-  id: string;
-  name: string;
-  email: string;
-  type: string;
-  message: string;
-  date: string;
 }
 interface AccessibilitySettings {
   fontScale: number;
@@ -1362,14 +1360,12 @@ function AccessGate({
 function AdminPanel({
   users,
   setUsers,
-  recommendations,
   onBack,
   darkMode,
   toggleDark,
 }: {
   users: AppUser[];
   setUsers: (u: AppUser[]) => void;
-  recommendations: Recommendation[];
   onBack: () => void;
   darkMode: boolean;
   toggleDark: () => void;
@@ -1382,6 +1378,9 @@ function AdminPanel({
   const [emailFailures, setEmailFailures] = useState<Record<string, UserStatus>>({});
   const [profilesLoading, setProfilesLoading] = useState(true);
   const [profileLoadError, setProfileLoadError] = useState("");
+  const [contactSubmissions, setContactSubmissions] = useState<ContactSubmission[]>([]);
+  const [contactSubmissionsLoading, setContactSubmissionsLoading] = useState(true);
+  const [contactSubmissionsError, setContactSubmissionsError] = useState("");
   const [emailJsConfig, setEmailJsConfig] = useLocalStorage("scribio_emailjs_config", {
     serviceId: "",
     templateId: "",
@@ -1419,6 +1418,25 @@ function AdminPanel({
     const interval = setInterval(() => void refreshProfiles(), 6000);
     return () => clearInterval(interval);
   }, [refreshProfiles]);
+
+  const refreshContactSubmissions = useCallback(async () => {
+    try {
+      setContactSubmissions(await fetchContactSubmissions());
+      setContactSubmissionsError("");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown database error.";
+      console.error("Failed to refresh contact submissions:", error);
+      setContactSubmissionsError(`Could not load Contact Us submissions: ${message}`);
+    } finally {
+      setContactSubmissionsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshContactSubmissions();
+    const interval = setInterval(() => void refreshContactSubmissions(), 6000);
+    return () => clearInterval(interval);
+  }, [refreshContactSubmissions]);
 
   const pending = [...users]
     .filter((u) => u.status === "pending")
@@ -1826,36 +1844,56 @@ function AdminPanel({
         <div className="mt-4 bg-card rounded-2xl overflow-hidden shadow-xl">
           <div className="px-6 py-4 border-b border-border bg-muted/30 flex items-center justify-between">
             <div>
-              <h2 className="font-bold text-foreground">Recommendations</h2>
+              <h2 className="font-bold text-foreground">Contact Us submissions</h2>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Feedback submitted from Contact Us.
+                Synced from Supabase for all signed-in accounts and devices.
               </p>
             </div>
             <span className="text-xs text-muted-foreground font-medium">
-              {recommendations.length} record{recommendations.length !== 1 ? "s" : ""}
+              {contactSubmissions.length} record{contactSubmissions.length !== 1 ? "s" : ""}
             </span>
           </div>
-          {recommendations.length === 0 ? (
+          {contactSubmissionsError ? (
+            <p className="m-4 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+              {contactSubmissionsError}
+            </p>
+          ) : contactSubmissionsLoading && contactSubmissions.length === 0 ? (
             <p className="p-8 text-center text-sm text-muted-foreground">
-              No recommendations yet.
+              Loading Contact Us submissions from Supabase…
+            </p>
+          ) : contactSubmissions.length === 0 ? (
+            <p className="p-8 text-center text-sm text-muted-foreground">
+              No Contact Us submissions yet.
             </p>
           ) : (
             <div className="divide-y divide-border">
-              {[...recommendations].reverse().map((recommendation) => (
-                <div key={recommendation.id} className="px-6 py-4">
+              {contactSubmissions.map((submission) => (
+                <div key={submission.id} className="px-6 py-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="font-semibold text-sm text-foreground">
-                        {recommendation.type} from {recommendation.name}
+                        {submission.type === "bug"
+                          ? "Bug report"
+                          : submission.type === "problem"
+                            ? "Problem"
+                            : submission.type === "content"
+                              ? "Content request"
+                              : submission.type === "other"
+                                ? "Other"
+                                : "Suggestion"}{" "}
+                        from {submission.name}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {recommendation.email || "No reply email provided"} · {formatDate(recommendation.date)}
+                        {submission.email || "No reply email provided"} · {formatDate(submission.createdAt)}
+                      </p>
+                      <p className="mt-1 text-[10px] text-muted-foreground">
+                        Linked account: {submission.userId}
                       </p>
                     </div>
-                    <span className="text-xs uppercase font-bold text-accent">{recommendation.type}</span>
+                    <span className="text-xs uppercase font-bold text-accent">{submission.type}</span>
                   </div>
                   <p className="text-sm text-muted-foreground mt-2 whitespace-pre-wrap">
-                    {recommendation.message}
+                    {submission.message}
                   </p>
                 </div>
               ))}
@@ -6279,34 +6317,49 @@ function NotesPanel({
 }
 
 // ─── CONTACT ──────────────────────────────────────────────────────────────────
-function ContactUs({
-  recommendations,
-  setRecommendations,
-}: {
-  recommendations: Recommendation[];
-  setRecommendations: (r: Recommendation[]) => void;
-}) {
-  const [form, setForm] = useState({
-    name: "",
-    email: "",
+function ContactUs({ user }: { user: AppUser }) {
+  const [form, setForm] = useState<{
+    name: string;
+    email: string;
+    type: ContactSubmissionType;
+    message: string;
+  }>({
+    name: user.name,
+    email: user.email,
     type: "suggestion",
     message: "",
   });
   const [sent, setSent] = useState(false);
-  function handleSubmit(e: React.FormEvent) {
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setRecommendations([
-      ...recommendations,
-      { ...form, id: generateId(), date: todayStr() },
-    ]);
-    setSent(true);
-    setTimeout(() => setSent(false), 5000);
-    setForm({
-      name: "",
-      email: "",
-      type: "suggestion",
-      message: "",
-    });
+    setSubmitting(true);
+    setSubmitError("");
+    try {
+      await createContactSubmission({
+        userId: user.id,
+        name: form.name.trim(),
+        email: form.email.trim(),
+        type: form.type,
+        message: form.message.trim(),
+      });
+      setSent(true);
+      setTimeout(() => setSent(false), 5000);
+      setForm({
+        name: user.name,
+        email: user.email,
+        type: "suggestion",
+        message: "",
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown database error.";
+      console.error("Failed to submit Contact Us message:", error);
+      setSubmitError(`Your message could not be saved: ${message}`);
+    } finally {
+      setSubmitting(false);
+    }
   }
   return (
     <div className="p-6 space-y-6 max-w-2xl">
@@ -6380,6 +6433,7 @@ function ContactUs({
                     name: e.target.value,
                   }))
                 }
+                maxLength={120}
                 required
                 placeholder="First name"
                 className="w-full px-3 py-2 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
@@ -6397,6 +6451,7 @@ function ContactUs({
                     email: e.target.value,
                   }))
                 }
+                maxLength={254}
                 type="email"
                 placeholder="For a reply"
                 className="w-full px-3 py-2 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
@@ -6410,12 +6465,16 @@ function ContactUs({
             <select
               value={form.type}
               onChange={(e) =>
-                setForm((f) => ({ ...f, type: e.target.value }))
+                setForm((f) => ({
+                  ...f,
+                  type: e.target.value as ContactSubmissionType,
+                }))
               }
               className="w-full px-3 py-2 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             >
               <option value="suggestion">Suggestion</option>
               <option value="bug">Bug Report</option>
+              <option value="problem">Problem</option>
               <option value="content">Content Request</option>
               <option value="other">Other</option>
             </select>
@@ -6432,17 +6491,25 @@ function ContactUs({
                   message: e.target.value,
                 }))
               }
+              maxLength={5000}
               required
               rows={4}
               placeholder="Tell us what you think..."
               className="w-full px-3 py-2 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-ring resize-none"
             />
           </div>
+          {submitError && (
+            <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+              {submitError}
+            </p>
+          )}
           <button
             type="submit"
+            disabled={submitting}
             className="w-full py-2.5 rounded-xl bg-primary text-primary-foreground font-semibold text-sm hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
           >
-            <Mail className="w-4 h-4" /> Send Message
+            {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
+            {submitting ? "Sending…" : "Send Message"}
           </button>
         </form>
       )}
@@ -6746,10 +6813,6 @@ export default function App() {
     userStorageKey("qs_notes", sessionUserId),
     [],
   );
-  const [recommendations, setRecommendationsRaw] = useLocalStorage<Recommendation[]>(
-    userStorageKey("scribio_recommendations", sessionUserId),
-    [],
-  );
   const [accessibility, setAccessibility] = useLocalStorage<AccessibilitySettings>(
     userStorageKey("scribio_accessibility", sessionUserId),
     { fontScale: 100, fontFamily: "default", colour: "default", highContrast: false },
@@ -6763,7 +6826,6 @@ export default function App() {
   const setTasks = (t: Task[]) => setTasksRaw(t);
   const setExamDates = (e: ExamDate[]) => setExamDatesRaw(e);
   const setNotes = (n: NoteFile[]) => setNotesRaw(n);
-  const setRecommendations = (r: Recommendation[]) => setRecommendationsRaw(r);
 
   const studyData = {
     selectedSubjects,
@@ -6772,7 +6834,6 @@ export default function App() {
     tasks,
     examDates,
     notes,
-    recommendations,
     accessibility,
     darkMode,
   };
@@ -6832,9 +6893,6 @@ export default function App() {
           if (Array.isArray(data.notes)) {
             setNotesRaw(data.notes as NoteFile[]);
           }
-          if (Array.isArray(data.recommendations)) {
-            setRecommendationsRaw(data.recommendations as Recommendation[]);
-          }
           if (data.accessibility) {
             setAccessibility(data.accessibility as AccessibilitySettings);
           }
@@ -6858,7 +6916,7 @@ export default function App() {
     return () => {
       isMounted = false;
     };
-  }, [sessionUserId, studyDataReload, setSelectedSubjectsRaw, setScoresRaw, setPastPaperScoresRaw, setTasksRaw, setExamDatesRaw, setNotesRaw, setRecommendationsRaw, setAccessibility, setDarkMode]);
+  }, [sessionUserId, studyDataReload, setSelectedSubjectsRaw, setScoresRaw, setPastPaperScoresRaw, setTasksRaw, setExamDatesRaw, setNotesRaw, setAccessibility, setDarkMode]);
 
   useEffect(() => {
     if (
@@ -6931,7 +6989,6 @@ export default function App() {
         setTasksRaw(nextData.tasks as Task[]);
         setExamDatesRaw(nextData.examDates as ExamDate[]);
         setNotesRaw(nextData.notes as NoteFile[]);
-        setRecommendationsRaw(nextData.recommendations as Recommendation[]);
         setAccessibility(nextData.accessibility as AccessibilitySettings);
         setDarkMode(nextData.darkMode as boolean);
         setStudyDataSyncError("");
@@ -6953,7 +7010,6 @@ export default function App() {
     setTasksRaw,
     setExamDatesRaw,
     setNotesRaw,
-    setRecommendationsRaw,
     setAccessibility,
     setDarkMode,
   ]);
@@ -7067,7 +7123,6 @@ export default function App() {
       <AdminPanel
         users={users}
         setUsers={setUsers}
-        recommendations={recommendations}
         onBack={() => void handleAdminBack()}
         darkMode={darkMode}
         toggleDark={() => setDarkMode((current) => !current)}
@@ -7322,10 +7377,7 @@ export default function App() {
                 />
               )}
               {view === "contact" && (
-                <ContactUs
-                  recommendations={recommendations}
-                  setRecommendations={setRecommendations}
-                />
+                currentUser && <ContactUs user={currentUser} />
               )}
             </>
           )}
