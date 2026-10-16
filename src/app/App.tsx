@@ -1,5 +1,3 @@
-import { supabase } from "./supabaseClient";
-
 import {
   useState,
   useEffect,
@@ -663,17 +661,9 @@ function AccessGate({
 
     if (firebaseConfigured && firebaseAuth) {
       try {
-       const userCredential = await signInWithPassword(email, loginPassword);
+        const userCredential = await signInWithPassword(email, loginPassword);
         const user = userCredential.user;
         const profile = await loadUserProfile(user.uid);
-
-        // Check if user is approved
-        const userStatus = profile?.status ?? "pending";
-        if (userStatus !== "approved") {
-          await supabase.auth.signOut(); // log them out immediately
-          setLoginError("Your request is still pending admin approval. Please check back soon.");
-          return;
-        }
 
         const approvedUser: AppUser = {
           id: user.uid,
@@ -681,7 +671,7 @@ function AccessGate({
           email: user.email ?? email,
           school: profile?.school ?? "",
           passwordHash: simpleHash(loginPassword),
-          status: userStatus as UserStatus,
+          status: (profile?.status as UserStatus | undefined) ?? "approved",
           requestDate: profile?.requestDate ?? todayStr(),
         };
 
