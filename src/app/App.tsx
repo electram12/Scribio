@@ -1335,6 +1335,9 @@ function AccessGate({
                   Once your request is accepted, you will log in
                   with your email and the password you set here.
                 </p>
+                <p className="text-xs text-muted-foreground bg-muted/60 rounded-lg px-3 py-2">
+                  Requests are usually approved or denied within 24 hours. Please try logging in after 24 hours, and check our Instagram for updates on requests.
+                </p>
                 <button
                   type="submit"
                   className="w-full py-2.5 rounded-lg bg-accent text-accent-foreground font-semibold text-sm hover:opacity-90 transition-opacity"
@@ -1353,9 +1356,7 @@ function AccessGate({
                   Request Submitted!
                 </h3>
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  Your request has been sent for approval. Once
-                  approved, you can log in with your email and
-                  the password you just set.
+                  Your request has been sent for approval. Requests are usually approved or denied within 24 hours. Please try logging in after 24 hours, and check our Instagram for updates on requests. If approved, use your email and the password you set.
                 </p>
                 <button
                   type="button"
@@ -1464,16 +1465,12 @@ function AdminPanel({
   const [contactSubmissionsError, setContactSubmissionsError] = useState("");
   const [emailJsConfig, setEmailJsConfig] = useLocalStorage("scribio_emailjs_config", {
     serviceId: "",
-    otherServiceId: "",
     templateId: "",
     publicKey: "",
   });
   const [emailJsDraft, setEmailJsDraft] = useState(emailJsConfig);
   const emailJsConfigured = Boolean(
-    emailJsConfig.serviceId &&
-      emailJsConfig.otherServiceId &&
-      emailJsConfig.templateId &&
-      emailJsConfig.publicKey,
+    emailJsConfig.serviceId && emailJsConfig.templateId && emailJsConfig.publicKey,
   );
   useEffect(() => setEmailJsDraft(emailJsConfig), [emailJsConfig]);
 
@@ -1543,12 +1540,11 @@ function AdminPanel({
     event.preventDefault();
     const config = {
       serviceId: emailJsDraft.serviceId.trim(),
-      otherServiceId: emailJsDraft.otherServiceId.trim(),
       templateId: emailJsDraft.templateId.trim(),
       publicKey: emailJsDraft.publicKey.trim(),
     };
-    if (!config.serviceId || !config.otherServiceId || !config.templateId || !config.publicKey) {
-      showToast("Enter both EmailJS service IDs, the template ID, and the public key.", false);
+    if (!config.serviceId || !config.templateId || !config.publicKey) {
+      showToast("Enter the EmailJS service ID, template ID, and public key.", false);
       return;
     }
     setEmailJsConfig(config);
@@ -1564,14 +1560,11 @@ function AdminPanel({
     const decisionMessage = status === "approved"
       ? "Your access request has been approved. You can now sign in."
       : "Your access request was not approved. Please contact the administrator if you have questions.";
-    const serviceId = user.email.trim().toLowerCase().endsWith("@gmail.com")
-      ? emailJsConfig.serviceId
-      : emailJsConfig.otherServiceId;
     const response = await fetch("https://api.emailjs.com/api/v1.0/email/send", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        service_id: serviceId,
+        service_id: emailJsConfig.serviceId,
         template_id: emailJsConfig.templateId,
         user_id: emailJsConfig.publicKey,
         template_params: {
@@ -1732,31 +1725,20 @@ function AdminPanel({
             <div>
               <h2 className="font-bold text-foreground">EmailJS settings</h2>
               <p className="mt-1 text-xs text-muted-foreground">
-                Use the Gmail service for @gmail.com recipients and the other service for all other recipients.
+                Use your Gmail EmailJS service to send approval and denial notifications.
               </p>
             </div>
             <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${emailJsConfigured ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300" : "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"}`}>
               {emailJsConfigured ? "Configured" : "Not configured"}
             </span>
           </div>
-          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
             <label className="grid gap-1 text-xs font-semibold text-foreground" htmlFor="emailjs-gmail-service-id">
               Gmail Service ID
               <input
                 id="emailjs-gmail-service-id"
                 value={emailJsDraft.serviceId}
                 onChange={(event) => setEmailJsDraft({ ...emailJsDraft, serviceId: event.target.value })}
-                autoComplete="off"
-                required
-                className="w-full rounded-lg border border-border bg-input-background px-3 py-2 text-sm font-normal text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-              />
-            </label>
-            <label className="grid gap-1 text-xs font-semibold text-foreground" htmlFor="emailjs-other-service-id">
-              Other email service ID
-              <input
-                id="emailjs-other-service-id"
-                value={emailJsDraft.otherServiceId ?? ""}
-                onChange={(event) => setEmailJsDraft({ ...emailJsDraft, otherServiceId: event.target.value })}
                 autoComplete="off"
                 required
                 className="w-full rounded-lg border border-border bg-input-background px-3 py-2 text-sm font-normal text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
