@@ -145,6 +145,36 @@ export async function updateUserProfileStatus(
   if (!data) throw new Error("No user profile was updated.");
 }
 
+export async function updateAccountProfile(
+  userId: string,
+  profile: { name: string; school: string },
+) {
+  if (!supabase) {
+    throw new Error("Supabase is not configured.");
+  }
+
+  const { data: authData, error: authError } = await supabase.auth.getUser();
+  if (authError) throw authError;
+  if (authData.user?.id !== userId) {
+    throw new Error("You can only edit your own account details.");
+  }
+
+  const { error } = await supabase.rpc("update_scribio_account_profile", {
+    profile_name: profile.name,
+    profile_school: profile.school,
+  });
+  if (error) throw error;
+}
+
+export async function updateAccountPassword(password: string) {
+  if (!supabase) {
+    throw new Error("Supabase is not configured.");
+  }
+
+  const { error } = await supabase.auth.updateUser({ password });
+  if (error) throw error;
+}
+
 export async function saveStudyData(userId: string, data: Record<string, unknown>) {
   if (!supabase) return null;
 

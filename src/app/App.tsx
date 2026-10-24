@@ -60,6 +60,7 @@ import {
   Minus,
   Type,
   Bell,
+  RefreshCw,
   Camera,
   Upload,
   GripVertical,
@@ -96,6 +97,8 @@ import {
   signInWithPassword,
   signUpWithPassword,
   updateUserProfileStatus,
+  updateAccountProfile,
+  updateAccountPassword,
 } from "../lib/firebase";
 
 // ─── TYPES ────────────────────────────────────────────────────────────────────
@@ -179,7 +182,7 @@ interface PastPaperScoreEntry {
   date: string;
 }
 interface DrawStroke {
-  tool: "pen" | "eraser" | "line" | "rect" | "circle";
+  tool: "pen" | "highlighter" | "eraser" | "line" | "rect" | "circle";
   color: string;
   width: number;
   points: { x: number; y: number }[];
@@ -190,6 +193,7 @@ interface NoteFile {
   createdAt: string;
   textContent: string;
   drawStrokes: DrawStroke[];
+  drawBackground?: "#111111" | "#ffffff";
 }
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
@@ -198,31 +202,67 @@ const SUBJECTS_LIST = [
   "Administration & IT",
   "Art & Design",
   "Biology",
+  "Human Biology",
+  "Criminology",
+  "Applications of Mathematics",
   "Business Management",
   "Chemistry",
+  "Cantonese",
+  "Care",
+  "Childcare and Development",
+  "Classical Studies",
   "Computing Science",
+  "Cruinn eolas",
+  "Dance",
+  "Design and Manufacture",
   "Drama",
   "Economics",
   "Engineering Science",
+  "ESOL",
+  "Eachdraidh",
+  "Environmental Science",
   "English",
+  "Fashion and Textile Technology",
   "French",
+  "Gaelic (Learners)",
+  "Gniomhachas Matamataigs",
+  "Gàidhlig",
   "Geography",
   "German",
   "Graphic Communication",
+  "Health and Food Technology",
   "History",
   "Home Economics",
+  "Italian",
   "Latin",
+  "Mandarin",
+  "Mandarin Simplified",
+  "Mandarin Traditional",
+  "Matamataig",
   "Mathematics",
+  "Mathematics of Mechanics",
+  "Media",
+  "Music Technology",
   "Modern Studies",
   "Music",
+  "Nuadh eolas",
   "Philosophy",
+  "Photography",
   "Physical Education",
   "Physics",
+  "Politics",
+  "Practical Cake Craft",
+  "Practical Cookery",
+  "Practical Electronics",
+  "Practical Metalworking",
+  "Practical Woodworking",
   "Psychology",
   "RMPS",
   "Sociology",
   "Spanish",
-];
+  "Statistics",
+  "Urdu",
+].sort((left, right) => left.localeCompare(right));
 const LEVELS: Level[] = [
   "National 5",
   "Higher",
@@ -297,7 +337,7 @@ const HELPLINES = [
 ];
 
 // Block Blast piece definitions
-const BOARD_SIZE = 8;
+const BOARD_SIZE = 6;
 interface BlockPiece {
   shape: number[][];
   color: string;
@@ -476,6 +516,17 @@ function AppLogo({
   );
 }
 
+function LegalFooter() {
+  return (
+    <footer className="w-full shrink-0 border-t border-border/60 bg-background/95 px-2 py-1 text-center text-[8px] leading-tight text-muted-foreground">
+      Scribio OPERATING AS IF A BRANCH OF YOUNG ENTERPRISE<br />
+      Place of registration: Scotland<br />
+      YE registered number Scotland: SC054666<br />
+      YE registered office: The Coram Campus, 41 Brunswick Square London, WCIN 1AZ
+    </footer>
+  );
+}
+
 // ─── MONTHLY CALENDAR ─────────────────────────────────────────────────────────
 function MonthlyCalendar({
   examDates,
@@ -483,6 +534,7 @@ function MonthlyCalendar({
   examDates: ExamDate[];
 }) {
   const [viewDate, setViewDate] = useState(() => new Date());
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const today = todayStr();
   const year = viewDate.getFullYear();
   const month = viewDate.getMonth();
@@ -503,11 +555,13 @@ function MonthlyCalendar({
   }
 
   function prevMonth() {
+    setSelectedDate(null);
     setViewDate(
       (d) => new Date(d.getFullYear(), d.getMonth() - 1, 1),
     );
   }
   function nextMonth() {
+    setSelectedDate(null);
     setViewDate(
       (d) => new Date(d.getFullYear(), d.getMonth() + 1, 1),
     );
@@ -569,8 +623,12 @@ function MonthlyCalendar({
           const eventKinds = [...new Set(eventsOnDay.map(getCalendarEventKind))];
           const firstEventKind = eventKinds[0];
           return (
-            <div
+            <button
+              type="button"
               key={i}
+              onClick={() => setSelectedDate(dateStr)}
+              aria-pressed={selectedDate === dateStr}
+              aria-label={`${dateStr}${eventsOnDay.length ? `: ${eventsOnDay.map((event) => `${getCalendarEventKind(event)} ${getCalendarEventName(event)}`).join(", ")}` : ""}`}
               title={
                 eventsOnDay.length
                   ? eventsOnDay
@@ -578,19 +636,41 @@ function MonthlyCalendar({
                       .join(", ")
                   : dateStr
               }
-              className={`h-8 w-full rounded-lg flex items-center justify-center text-xs font-medium transition-colors relative
+              className={`h-8 w-full appearance-none rounded-lg p-0 flex items-center justify-center text-xs font-medium transition-colors relative cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring
                 ${isToday ? "ring-2 ring-primary ring-offset-1" : ""}
-                ${firstEventKind ? "text-white font-bold" : "bg-muted text-muted-foreground"}`}
+                ${firstEventKind ? "text-white font-bold" : "bg-muted text-muted-foreground"}
+                ${selectedDate === dateStr ? "outline outline-2 outline-offset-1 outline-primary" : ""}`}
               style={firstEventKind ? { backgroundColor: getCalendarEventColor(firstEventKind) } : undefined}
             >
               {day}
               {eventKinds.length > 1 && <span className="absolute bottom-0.5 flex gap-0.5">
                 {eventKinds.slice(1, 4).map((kind) => <span key={kind} className="h-1 w-1 rounded-full border border-white" style={{ backgroundColor: getCalendarEventColor(kind) }} />)}
               </span>}
-            </div>
+            </button>
           );
         })}
       </div>
+      {selectedDate && (
+        <div className="mt-3 rounded-lg border border-border bg-muted/40 p-3" aria-live="polite">
+          <p className="text-xs font-semibold">
+            {formatDate(selectedDate)}
+          </p>
+          {(eventsByDate[selectedDate] ?? []).length === 0 ? (
+            <p className="mt-1 text-xs text-muted-foreground">No events on this day.</p>
+          ) : (
+            <ul className="mt-1 space-y-1">
+              {eventsByDate[selectedDate].map((event) => (
+                <li key={event.id} className="text-xs text-muted-foreground">
+                  <span className="font-semibold text-foreground">{getCalendarEventKind(event)}:</span>{" "}
+                  {getCalendarEventName(event)}
+                  {event.level && ` · ${event.level}`}
+                  {event.time && ` · ${event.time}`}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-3 mt-3 text-xs text-muted-foreground">
         {(["Exam", "Prelim", "Test", "Other"] as const).map((kind) => (
           <span key={kind} className="flex items-center gap-1.5">
@@ -909,9 +989,9 @@ function AccessGate({
     "w-full px-3 py-2.5 rounded-lg border border-border bg-input-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-ring";
 
   return (
-    <div className="access-gate min-h-screen bg-background text-foreground flex items-center justify-center p-4">
+    <div className="access-gate min-h-screen bg-background text-foreground flex flex-col items-center p-4">
       <ThemeToggle darkMode={darkMode} onToggle={toggleDark} />
-      <div className="w-full max-w-md">
+      <div className="my-auto w-full max-w-md py-4">
         <div className="text-center mb-8">
           <div className="flex justify-center mb-4">
             <AppLogo size="lg" />
@@ -1352,6 +1432,7 @@ function AccessGate({
           Scottish QS Study Hub · Built for Scottish students
         </p>
       </div>
+      <LegalFooter />
     </div>
   );
 }
@@ -1383,13 +1464,18 @@ function AdminPanel({
   const [contactSubmissionsError, setContactSubmissionsError] = useState("");
   const [emailJsConfig, setEmailJsConfig] = useLocalStorage("scribio_emailjs_config", {
     serviceId: "",
+    otherServiceId: "",
     templateId: "",
     publicKey: "",
   });
   const [emailJsDraft, setEmailJsDraft] = useState(emailJsConfig);
   const emailJsConfigured = Boolean(
-    emailJsConfig.serviceId && emailJsConfig.templateId && emailJsConfig.publicKey,
+    emailJsConfig.serviceId &&
+      emailJsConfig.otherServiceId &&
+      emailJsConfig.templateId &&
+      emailJsConfig.publicKey,
   );
+  useEffect(() => setEmailJsDraft(emailJsConfig), [emailJsConfig]);
 
   const refreshProfiles = useCallback(async () => {
     try {
@@ -1457,11 +1543,12 @@ function AdminPanel({
     event.preventDefault();
     const config = {
       serviceId: emailJsDraft.serviceId.trim(),
+      otherServiceId: emailJsDraft.otherServiceId.trim(),
       templateId: emailJsDraft.templateId.trim(),
       publicKey: emailJsDraft.publicKey.trim(),
     };
-    if (!config.serviceId || !config.templateId || !config.publicKey) {
-      showToast("Enter the EmailJS service ID, template ID, and public key.", false);
+    if (!config.serviceId || !config.otherServiceId || !config.templateId || !config.publicKey) {
+      showToast("Enter both EmailJS service IDs, the template ID, and the public key.", false);
       return;
     }
     setEmailJsConfig(config);
@@ -1477,11 +1564,14 @@ function AdminPanel({
     const decisionMessage = status === "approved"
       ? "Your access request has been approved. You can now sign in."
       : "Your access request was not approved. Please contact the administrator if you have questions.";
+    const serviceId = user.email.trim().toLowerCase().endsWith("@gmail.com")
+      ? emailJsConfig.serviceId
+      : emailJsConfig.otherServiceId;
     const response = await fetch("https://api.emailjs.com/api/v1.0/email/send", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        service_id: emailJsConfig.serviceId,
+        service_id: serviceId,
         template_id: emailJsConfig.templateId,
         user_id: emailJsConfig.publicKey,
         template_params: {
@@ -1573,7 +1663,7 @@ function AdminPanel({
   };
 
   return (
-    <div className="min-h-screen bg-background text-foreground p-4">
+    <div className="min-h-screen bg-background text-foreground p-4 pb-14">
       <ThemeToggle darkMode={darkMode} onToggle={toggleDark} />
       {toast && (
         <div
@@ -1642,20 +1732,31 @@ function AdminPanel({
             <div>
               <h2 className="font-bold text-foreground">EmailJS settings</h2>
               <p className="mt-1 text-xs text-muted-foreground">
-                Connect approval and denial notifications for this browser.
+                Use the Gmail service for @gmail.com recipients and the other service for all other recipients.
               </p>
             </div>
             <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${emailJsConfigured ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300" : "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"}`}>
               {emailJsConfigured ? "Configured" : "Not configured"}
             </span>
           </div>
-          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <label className="grid gap-1 text-xs font-semibold text-foreground" htmlFor="emailjs-service-id">
-              Service ID
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <label className="grid gap-1 text-xs font-semibold text-foreground" htmlFor="emailjs-gmail-service-id">
+              Gmail Service ID
               <input
-                id="emailjs-service-id"
+                id="emailjs-gmail-service-id"
                 value={emailJsDraft.serviceId}
                 onChange={(event) => setEmailJsDraft({ ...emailJsDraft, serviceId: event.target.value })}
+                autoComplete="off"
+                required
+                className="w-full rounded-lg border border-border bg-input-background px-3 py-2 text-sm font-normal text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            </label>
+            <label className="grid gap-1 text-xs font-semibold text-foreground" htmlFor="emailjs-other-service-id">
+              Other email service ID
+              <input
+                id="emailjs-other-service-id"
+                value={emailJsDraft.otherServiceId ?? ""}
+                onChange={(event) => setEmailJsDraft({ ...emailJsDraft, otherServiceId: event.target.value })}
                 autoComplete="off"
                 required
                 className="w-full rounded-lg border border-border bg-input-background px-3 py-2 text-sm font-normal text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
@@ -1910,6 +2011,7 @@ function AdminPanel({
           </div>
         </div>
       </div>
+      <LegalFooter />
     </div>
   );
 }
@@ -1948,11 +2050,11 @@ function OnboardingModal({
   );
 
   return (
-    <div className="fixed inset-0 bg-background text-foreground flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 z-50 flex flex-col items-center overflow-y-auto bg-background p-4 text-foreground">
       <ThemeToggle darkMode={darkMode} onToggle={toggleDark} />
       <div
-        className="bg-card text-card-foreground rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col"
-        style={{ maxHeight: "92vh" }}
+        className="my-auto flex w-full max-w-2xl flex-col rounded-2xl bg-card text-card-foreground shadow-2xl"
+        style={{ maxHeight: "84vh" }}
       >
         <div className="p-5 border-b border-border">
           <div className="flex items-center gap-3 mb-1">
@@ -2033,6 +2135,7 @@ function OnboardingModal({
           </button>
         </div>
       </div>
+      <LegalFooter />
     </div>
   );
 }
@@ -2059,6 +2162,161 @@ const NAV_ITEMS: {
   { id: "contact", label: "Contact Us", icon: Mail },
 ];
 
+function AccountPanel({
+  user,
+  selectedSubjects,
+  setSelectedSubjects,
+  onSaveProfile,
+  onChangePassword,
+  onClose,
+}: {
+  user: AppUser;
+  selectedSubjects: SelectedSubject[];
+  setSelectedSubjects: (subjects: SelectedSubject[]) => void;
+  onSaveProfile: (name: string, school: string) => Promise<void>;
+  onChangePassword: (currentPassword: string, newPassword: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [section, setSection] = useState<"details" | "password" | "subjects">("details");
+  const [name, setName] = useState(user.name);
+  const [school, setSchool] = useState(user.school);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  async function saveProfile(event: React.FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      await onSaveProfile(name.trim(), school.trim());
+      setMessage("Account details saved.");
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Could not save account details.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function changePassword(event: React.FormEvent) {
+    event.preventDefault();
+    setError("");
+    setMessage("");
+    if (newPassword.length < 8) {
+      setError("Your new password must contain at least 8 characters.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setError("The new passwords do not match.");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      await onChangePassword(currentPassword, newPassword);
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setMessage("Password changed.");
+    } catch (changeError) {
+      setError(changeError instanceof Error ? changeError.message : "Could not change password.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function renderPasswordField(
+    id: string,
+    label: string,
+    value: string,
+    setValue: (value: string) => void,
+  ) {
+    return (
+      <div key={id}>
+        <label htmlFor={id} className="mb-1 block text-xs font-semibold">{label}</label>
+        <input id={id} type="password" value={value} onChange={(event) => setValue(event.target.value)} required autoComplete={id === "current-password" ? "current-password" : "new-password"} className="w-full rounded-lg border border-border bg-input-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="account-panel-title">
+      <div className="flex max-h-[82vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-card text-card-foreground shadow-2xl">
+        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+          <div>
+            <h2 id="account-panel-title" className="font-bold">Account</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">{user.email}</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-lg p-1.5 hover:bg-muted" aria-label="Close account settings">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="flex gap-1 border-b border-border px-4 pt-3">
+          {([
+            ["details", "Details"],
+            ["password", "Password"],
+            ["subjects", "Subjects"],
+          ] as const).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => {
+                setSection(id);
+                setError("");
+                setMessage("");
+              }}
+              className={`rounded-t-lg px-3 py-2 text-xs font-semibold ${section === id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="overflow-y-auto">
+          {section === "details" && (
+            <form onSubmit={saveProfile} className="space-y-4 p-5">
+              <div>
+                <label htmlFor="account-name" className="mb-1 block text-xs font-semibold">Name</label>
+                <input id="account-name" value={name} onChange={(event) => setName(event.target.value)} maxLength={120} required className="w-full rounded-lg border border-border bg-input-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+              </div>
+              <div>
+                <label htmlFor="account-school" className="mb-1 block text-xs font-semibold">School</label>
+                <input id="account-school" value={school} onChange={(event) => setSchool(event.target.value)} className="w-full rounded-lg border border-border bg-input-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+              </div>
+              <p className="text-xs text-muted-foreground">Email address: {user.email}</p>
+              <button type="submit" disabled={busy || !name.trim()} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground disabled:opacity-50">
+                {busy ? "Saving…" : "Save details"}
+              </button>
+            </form>
+          )}
+          {section === "password" && (
+            <form onSubmit={changePassword} className="space-y-4 p-5">
+              {renderPasswordField("current-password", "Current password", currentPassword, setCurrentPassword)}
+              {renderPasswordField("new-password", "New password", newPassword, setNewPassword)}
+              {renderPasswordField("confirm-password", "Confirm new password", confirmPassword, setConfirmPassword)}
+              <p className="text-xs text-muted-foreground">Use at least 8 characters for your new password.</p>
+              <button type="submit" disabled={busy} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground disabled:opacity-50">
+                {busy ? "Updating…" : "Change password"}
+              </button>
+            </form>
+          )}
+          {section === "subjects" && (
+            <SubjectManager selectedSubjects={selectedSubjects} setSelectedSubjects={setSelectedSubjects} />
+          )}
+          {(error || message) && (
+            <p role={error ? "alert" : "status"} className={`mx-5 mb-5 rounded-lg border p-3 text-sm ${error ? "border-destructive/30 bg-destructive/5 text-destructive" : "border-green-500/30 bg-green-500/5 text-green-700 dark:text-green-300"}`}>
+              {error || message}
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Sidebar({
   view,
   setView,
@@ -2067,6 +2325,10 @@ function Sidebar({
   darkMode,
   toggleDark,
   onClose,
+  onOpenAccount,
+  onSync,
+  syncing,
+  syncMessage,
 }: {
   view: View;
   setView: (v: View) => void;
@@ -2075,6 +2337,10 @@ function Sidebar({
   darkMode: boolean;
   toggleDark: () => void;
   onClose: () => void;
+  onOpenAccount: () => void;
+  onSync: () => void;
+  syncing: boolean;
+  syncMessage: string;
 }) {
   const [trackerOpen, setTrackerOpen] = useState(
     view === "scores" || view === "pastPaperTracker",
@@ -2209,7 +2475,12 @@ function Sidebar({
       </nav>
 
       <div className="p-4 border-t border-sidebar-border space-y-2">
-        <div className="flex items-center gap-2 px-1 mb-2">
+        <button
+          type="button"
+          onClick={onOpenAccount}
+          className="flex w-full items-center gap-2 rounded-lg px-1 py-1 text-left hover:bg-sidebar-accent/60"
+          aria-label="Open account settings"
+        >
           <div className="w-7 h-7 rounded-full bg-sidebar-accent flex items-center justify-center shrink-0">
             <User className="w-3.5 h-3.5 text-sidebar-primary" />
           </div>
@@ -2221,26 +2492,37 @@ function Sidebar({
               {user.school}
             </p>
           </div>
-        </div>
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={toggleDark}
-            className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-sidebar-accent hover:bg-sidebar-accent/80 text-sidebar-foreground transition-colors text-xs font-medium"
-          >
-            {darkMode ? (
-              <Sun className="w-3.5 h-3.5" />
-            ) : (
-              <Moon className="w-3.5 h-3.5" />
-            )}
-            {darkMode ? "Light" : "Dark"}
-          </button>
+        </button>
+        <div>
           <button
             type="button"
             onClick={onLogout}
-            className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-sidebar-accent hover:bg-sidebar-accent/80 text-sidebar-foreground transition-colors text-xs font-medium"
+            className="mb-2 flex w-full items-center justify-center gap-1.5 rounded-lg bg-sidebar-accent px-2 py-1.5 text-xs font-medium text-sidebar-foreground transition-colors hover:bg-sidebar-accent/80"
           >
-            <LogOut className="w-3.5 h-3.5" /> Logout
+            <LogOut className="h-3.5 w-3.5" /> Logout
+          </button>
+          <button
+            type="button"
+            onClick={onSync}
+            disabled={syncing}
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-sidebar-accent px-2 py-1.5 text-xs font-medium text-sidebar-foreground transition-colors hover:bg-sidebar-accent/80 disabled:opacity-60"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${syncing ? "animate-spin" : ""}`} />
+            {syncing ? "Syncing…" : "Sync & update"}
+          </button>
+          <p className="mt-1 text-center text-[10px] leading-tight text-sidebar-foreground/60">
+            Only use if the app isn’t syncing.
+          </p>
+          {syncMessage && <p className="mt-1 text-center text-[10px] text-sidebar-foreground/80" role="status">{syncMessage}</p>}
+        </div>
+        <div>
+          <button
+            type="button"
+            onClick={toggleDark}
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-sidebar-accent py-1.5 text-xs font-medium text-sidebar-foreground transition-colors hover:bg-sidebar-accent/80"
+          >
+            {darkMode ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+            {darkMode ? "Light Mode" : "Dark Mode"}
           </button>
         </div>
       </div>
@@ -2539,8 +2821,7 @@ function PastPapers({
             No Subjects Selected
           </h3>
           <p className="text-muted-foreground text-sm mt-1">
-            Use "My Subjects" in the top bar to add your
-            subjects.
+            Use Subjects in the top bar or open Account in the sidebar to add your subjects.
           </p>
         </div>
       ) : (
@@ -2616,7 +2897,7 @@ function getQSPastPaperLink(subject: string, level: Level): string {
     "Administration & IT": "Administration and IT",
     "Art & Design": "Art and Design",
     "Home Economics": "Health and Food Technology",
-    RMPS: "Religious, Moral and Philosophical Studies",
+    RMPS: "Religious Moral and Philosophical Studies",
   };
   const name = officialNames[subject] || subject;
   const levelCode = level === "National 5" ? "N5" : level === "Advanced Higher" ? "NAH" : "NH";
@@ -4688,6 +4969,7 @@ function Tasks({
   selectedSubjects: SelectedSubject[];
 }) {
   const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [formError, setFormError] = useState("");
   const [filter, setFilter] = useState<
     "all" | "pending" | "done"
@@ -4699,23 +4981,48 @@ function Tasks({
     priority: "medium" as Task["priority"],
   });
 
-  function addTask(e: React.FormEvent) {
+  function openTaskForm(task?: Task) {
+    setEditingId(task?.id ?? null);
+    setForm({
+      title: task?.title ?? "",
+      subject: task?.subject ?? "",
+      dueDate: task?.dueDate ?? "",
+      priority: task?.priority ?? "medium",
+    });
+    setFormError("");
+    setAdding(true);
+  }
+
+  function saveTask(e: React.FormEvent) {
     e.preventDefault();
-    setTasks([
-      ...tasks,
-      {
-        id: generateId(),
-        ...form,
-        completed: false,
-        notified: false,
-      },
-    ]);
+    if (!form.title.trim()) {
+      setFormError("Enter a task title.");
+      return;
+    }
+    if (editingId) {
+      setTasks(tasks.map((task) => task.id === editingId
+        ? { ...task, ...form, title: form.title.trim() }
+        : task));
+    } else {
+      setTasks([
+        ...tasks,
+        {
+          id: generateId(),
+          ...form,
+          title: form.title.trim(),
+          completed: false,
+          notified: false,
+        },
+      ]);
+    }
     setForm({
       title: "",
       subject: "",
       dueDate: "",
       priority: "medium",
     });
+    setEditingId(null);
+    setFormError("");
     setAdding(false);
   }
 
@@ -4760,7 +5067,7 @@ function Tasks({
         </div>
         <button
           type="button"
-          onClick={() => setAdding(true)}
+          onClick={() => openTaskForm()}
           className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:opacity-90 transition-opacity"
         >
           <Plus className="w-3.5 h-3.5" /> Add Task
@@ -4835,6 +5142,14 @@ function Tasks({
               </div>
               <button
                 type="button"
+                onClick={() => openTaskForm(t)}
+                className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
+                aria-label={`Edit ${t.title}`}
+              >
+                <Pen className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
                 onClick={() =>
                   setTasks(tasks.filter((x) => x.id !== t.id))
                 }
@@ -4849,14 +5164,18 @@ function Tasks({
       {adding && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <form
-            onSubmit={addTask}
+            onSubmit={saveTask}
             className="bg-card text-card-foreground rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4"
           >
             <div className="flex items-center justify-between">
-              <h3 className="font-bold">Add Task</h3>
+              <h3 className="font-bold">{editingId ? "Edit Task" : "Add Task"}</h3>
               <button
                 type="button"
-                onClick={() => setAdding(false)}
+                onClick={() => {
+                  setAdding(false);
+                  setEditingId(null);
+                  setFormError("");
+                }}
                 className="p-1.5 rounded-lg hover:bg-muted transition-colors"
               >
                 <X className="w-4 h-4" />
@@ -4940,10 +5259,15 @@ function Tasks({
                 <option value="low">Low</option>
               </select>
             </div>
+            {formError && <p role="alert" className="text-xs text-destructive">{formError}</p>}
             <div className="flex gap-2 pt-1">
               <button
                 type="button"
-                onClick={() => setAdding(false)}
+                onClick={() => {
+                  setAdding(false);
+                  setEditingId(null);
+                  setFormError("");
+                }}
                 className="flex-1 py-2.5 rounded-xl border border-border font-semibold text-sm hover:bg-muted transition-colors"
               >
                 Cancel
@@ -4952,7 +5276,7 @@ function Tasks({
                 type="submit"
                 className="flex-1 py-2.5 rounded-xl bg-primary text-primary-foreground font-semibold text-sm hover:opacity-90 transition-opacity"
               >
-                Add Task
+                {editingId ? "Save Changes" : "Add Task"}
               </button>
             </div>
           </form>
@@ -4972,6 +5296,7 @@ function Wellbeing() {
           Your mental health matters. You are not alone.
         </p>
       </div>
+      <ChevronRight className="h-4 w-4 shrink-0 text-sidebar-foreground/50" />
       <div>
         <h2 className="font-bold text-base mb-3">
           📞 If you need to talk to someone
@@ -5444,6 +5769,7 @@ function BreakGame() {
   );
   const [gameOver, setGameOver] = useState(false);
   const [celebration, setCelebration] = useState("");
+  const touchDragging = useRef(false);
 
   function canPlaceAt(
     piece: BlockPiece,
@@ -5548,6 +5874,7 @@ function BreakGame() {
     if (newScore > highScore) setHighScore(newScore);
     setSelected(null);
     setHover(null);
+    touchDragging.current = false;
 
     const allUsed = newUsed.every(Boolean);
     let finalPieces = pieces;
@@ -5572,6 +5899,7 @@ function BreakGame() {
     setUsed([false, false, false]);
     setSelected(null);
     setHover(null);
+    touchDragging.current = false;
     setScore(0);
     setGameOver(false);
     setCelebration("");
@@ -5687,6 +6015,9 @@ function BreakGame() {
                 return (
                   <div
                     key={key}
+                    data-break-cell="true"
+                    data-row={r}
+                    data-column={c}
                     onDragOver={(e) => {
                       e.preventDefault();
                       setHover({ r, c });
@@ -5694,6 +6025,17 @@ function BreakGame() {
                     onDrop={(e) => {
                       e.preventDefault();
                       placePiece(r, c);
+                    }}
+                    onPointerEnter={(e) => {
+                      if (e.pointerType !== "mouse" && selected !== null) {
+                        setHover({ r, c });
+                      }
+                    }}
+                    onPointerUp={(e) => {
+                      if (e.pointerType !== "mouse" && selected !== null) {
+                        e.preventDefault();
+                        placePiece(r, c);
+                      }
                     }}
                     onDragLeave={() => setHover(null)}
                     className="aspect-square rounded-sm transition-colors"
@@ -5740,15 +6082,44 @@ function BreakGame() {
                 <div
                   key={idx}
                   draggable={!isUsed && !gameOver}
+                  onPointerDown={(event) => {
+                    if (event.pointerType !== "mouse" && !isUsed && !gameOver) {
+                      event.preventDefault();
+                      touchDragging.current = true;
+                      setSelected(idx);
+                    }
+                  }}
+                  onPointerMove={(event) => {
+                    if (event.pointerType === "mouse" || !touchDragging.current) return;
+                    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-break-cell='true']");
+                    if (target) {
+                      setHover({
+                        r: Number(target.dataset.row),
+                        c: Number(target.dataset.column),
+                      });
+                    } else {
+                      setHover(null);
+                    }
+                  }}
+                  onPointerUp={(event) => {
+                    if (event.pointerType === "mouse" || !touchDragging.current) return;
+                    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-break-cell='true']");
+                    if (target) {
+                      placePiece(Number(target.dataset.row), Number(target.dataset.column));
+                    } else {
+                      touchDragging.current = false;
+                    }
+                  }}
                   onDragStart={() => {
                     if (!isUsed && !gameOver) setSelected(idx);
                   }}
                   onDragEnd={() => {
                     setSelected(null);
                     setHover(null);
+                    touchDragging.current = false;
                   }}
                   className={`p-2 rounded-xl border-2 transition-colors flex flex-col items-center justify-center gap-1 ${isUsed ? "opacity-30 cursor-not-allowed border-border" : isSelected ? "border-primary bg-primary/10" : "border-border hover:border-primary/50 hover:bg-muted cursor-grab active:cursor-grabbing"}`}
-                  style={{ minHeight: 76, aspectRatio: "1 / 1" }}
+                  style={{ minHeight: 76, aspectRatio: "1 / 1", touchAction: "none" }}
                 >
                   <div
                     className="grid gap-0.5"
@@ -5809,9 +6180,13 @@ function BreakGame() {
 function DrawingCanvas({
   strokes,
   onStrokesChange,
+  background,
+  onBackgroundChange,
 }: {
   strokes: DrawStroke[];
   onStrokesChange: (s: DrawStroke[]) => void;
+  background: "#111111" | "#ffffff";
+  onBackgroundChange: (background: "#111111" | "#ffffff") => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [tool, setTool] = useState<DrawStroke["tool"]>("pen");
@@ -5825,26 +6200,14 @@ function DrawingCanvas({
     strokesRef.current = strokes;
   }, [strokes]);
 
-  function getPos(
-    e:
-      | React.MouseEvent<HTMLCanvasElement>
-      | React.TouchEvent<HTMLCanvasElement>,
-  ): { x: number; y: number } {
+  function getPos(e: React.PointerEvent<HTMLCanvasElement>): { x: number; y: number } {
     const canvas = canvasRef.current!;
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
-    let clientX: number, clientY: number;
-    if ("touches" in e) {
-      clientX = e.touches[0].clientX;
-      clientY = e.touches[0].clientY;
-    } else {
-      clientX = (e as React.MouseEvent).clientX;
-      clientY = (e as React.MouseEvent).clientY;
-    }
     return {
-      x: (clientX - rect.left) * scaleX,
-      y: (clientY - rect.top) * scaleY,
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY,
     };
   }
 
@@ -5853,14 +6216,16 @@ function DrawingCanvas({
     stroke: DrawStroke,
   ) {
     if (stroke.points.length === 0) return;
-    ctx.strokeStyle =
-      stroke.tool === "eraser" ? "#111111" : stroke.color;
+    ctx.strokeStyle = stroke.color;
+    ctx.globalCompositeOperation = stroke.tool === "eraser" ? "destination-out" : "source-over";
     ctx.lineWidth = stroke.width;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
+    ctx.globalAlpha = stroke.tool === "highlighter" ? 0.35 : 1;
 
     if (
       stroke.tool === "pen" ||
+      stroke.tool === "highlighter" ||
       stroke.tool === "eraser"
     ) {
       ctx.beginPath();
@@ -5900,13 +6265,15 @@ function DrawingCanvas({
       ctx.arc(stroke.points[0].x, stroke.points[0].y, r, 0, Math.PI * 2);
       ctx.stroke();
     }
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "source-over";
   }
 
   function redraw() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d")!;
-    ctx.fillStyle = "#111111";
+    ctx.fillStyle = background;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     for (const s of strokesRef.current) drawStrokeOnCtx(ctx, s);
     if (currentStroke.current) drawStrokeOnCtx(ctx, currentStroke.current);
@@ -5914,30 +6281,27 @@ function DrawingCanvas({
 
   useEffect(() => {
     redraw();
-  }, [strokes]);
+  }, [strokes, background]);
 
-  function onPointerDown(
-    e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>,
-  ) {
+  function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
     e.preventDefault();
     drawing.current = true;
+    e.currentTarget.setPointerCapture(e.pointerId);
     const pos = getPos(e);
     currentStroke.current = {
       tool,
       color,
-      width: tool === "eraser" ? brushSize * 3 : brushSize,
+      width: tool === "eraser" ? brushSize * 3 : tool === "highlighter" ? brushSize * 4 : brushSize,
       points: [pos],
     };
     redraw();
   }
 
-  function onPointerMove(
-    e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>,
-  ) {
+  function onPointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
     e.preventDefault();
     if (!drawing.current || !currentStroke.current) return;
     const pos = getPos(e);
-    if (tool === "pen" || tool === "eraser") {
+    if (tool === "pen" || tool === "highlighter" || tool === "eraser") {
       currentStroke.current.points.push(pos);
     } else {
       currentStroke.current.points = [
@@ -5948,10 +6312,13 @@ function DrawingCanvas({
     redraw();
   }
 
-  function onPointerUp(e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) {
+  function onPointerUp(e: React.PointerEvent<HTMLCanvasElement>) {
     e.preventDefault();
     if (!drawing.current || !currentStroke.current) return;
     drawing.current = false;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
     if (currentStroke.current.points.length > 0) {
       onStrokesChange([...strokesRef.current, currentStroke.current]);
     }
@@ -5959,13 +6326,14 @@ function DrawingCanvas({
   }
 
   const COLORS = [
-    "#ffffff", "#ff6b6b", "#ffd166", "#06d6a0",
+    "#ffffff", "#000000", "#ff6b6b", "#ffd166", "#06d6a0",
     "#118ab2", "#c77dff", "#f15bb5", "#f77f00",
-    "#2ec4b6", "#e63946", "#a8dadc", "#4cc9f0",
+    "#2ec4b6", "#e63946", "#a8dadc", "#4cc9f0", "#90be6d",
   ];
 
   const toolButtons: { id: DrawStroke["tool"]; icon: React.ReactNode; label: string }[] = [
     { id: "pen", icon: <Pen className="w-3.5 h-3.5" />, label: "Pen" },
+    { id: "highlighter", icon: <span className="text-[10px] font-black">H</span>, label: "Highlighter" },
     { id: "eraser", icon: <Eraser className="w-3.5 h-3.5" />, label: "Erase" },
     { id: "line", icon: <Minus className="w-3.5 h-3.5" />, label: "Line" },
     { id: "rect", icon: <Square className="w-3.5 h-3.5" />, label: "Rect" },
@@ -5982,9 +6350,40 @@ function DrawingCanvas({
               type="button"
               onClick={() => setTool(t.id)}
               title={t.label}
+              aria-label={t.label}
               className={`p-2 rounded-lg text-xs font-semibold transition-colors ${tool === t.id ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-foreground"}`}
             >
               {t.icon}
+            </button>
+          ))}
+          <label className="relative h-5 w-5 cursor-pointer overflow-hidden rounded-full border border-border" title="Choose pen colour">
+            <input
+              type="color"
+              value={color}
+              onChange={(event) => setColor(event.target.value)}
+              aria-label="Choose pen colour"
+              className="absolute -inset-2 h-9 w-9 cursor-pointer"
+            />
+          </label>
+        </div>
+        <div className="flex items-center gap-1 text-xs">
+          <span className="text-muted-foreground">Background:</span>
+          {([
+            ["#111111", "Black"],
+            ["#ffffff", "White"],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => {
+                onBackgroundChange(value);
+                if (value === "#ffffff" && color === "#ffffff") setColor("#000000");
+                if (value === "#111111" && color === "#000000") setColor("#ffffff");
+              }}
+              aria-pressed={background === value}
+              className={`rounded-md border px-2 py-1 font-semibold ${background === value ? "border-primary text-primary" : "border-border text-muted-foreground"}`}
+            >
+              {label}
             </button>
           ))}
         </div>
@@ -5994,6 +6393,7 @@ function DrawingCanvas({
               key={c}
               type="button"
               onClick={() => setColor(c)}
+              aria-label={`Select ${c} pen colour`}
               className="w-5 h-5 rounded-full border-2 transition-transform hover:scale-110"
               style={{
                 backgroundColor: c,
@@ -6028,14 +6428,11 @@ function DrawingCanvas({
         width={800}
         height={500}
         className="w-full rounded-xl cursor-crosshair touch-none"
-        style={{ background: "#111111" }}
-        onMouseDown={onPointerDown}
-        onMouseMove={onPointerMove}
-        onMouseUp={onPointerUp}
-        onMouseLeave={onPointerUp}
-        onTouchStart={onPointerDown}
-        onTouchMove={onPointerMove}
-        onTouchEnd={onPointerUp}
+        style={{ background, touchAction: "none" }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
       />
     </div>
   );
@@ -6051,6 +6448,13 @@ function WordNoteEditor({
   onNameChange: (name: string) => void;
 }) {
   const editorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (editor && document.activeElement !== editor) {
+      editor.textContent = note.textContent;
+    }
+  }, [note.id, note.textContent]);
+
   const runCommand = (command: string, value?: string) => {
     editorRef.current?.focus();
     document.execCommand(command, false, value);
@@ -6078,7 +6482,7 @@ function WordNoteEditor({
         {tools.map((tool) => <button key={tool.label} type="button" title={tool.label} aria-label={tool.label} onClick={() => runCommand(tool.command)} className="p-2 rounded hover:bg-background text-muted-foreground hover:text-foreground">{tool.icon}</button>)}
       </div>
       <input aria-label="Note title" value={note.name} onChange={(e) => onNameChange(e.target.value)} className="w-full px-6 pt-5 text-2xl font-bold bg-transparent outline-none" />
-      <div ref={editorRef} contentEditable role="textbox" aria-label="Note body" suppressContentEditableWarning onInput={(e) => onChange(e.currentTarget.innerText)} className="min-h-[55vh] p-6 outline-none whitespace-pre-wrap text-base leading-7" dangerouslySetInnerHTML={{ __html: note.textContent.replace(/\n/g, "<br />") }} />
+      <div ref={editorRef} contentEditable role="textbox" aria-label="Note body" dir="ltr" style={{ direction: "ltr", unicodeBidi: "plaintext", textAlign: "left" }} suppressContentEditableWarning onInput={(e) => onChange(e.currentTarget.innerText)} className="min-h-[55vh] p-6 outline-none whitespace-pre-wrap text-base leading-7" />
     </div>
   );
 }
@@ -6105,6 +6509,7 @@ function NotesPanel({
       createdAt: todayStr(),
       textContent: "",
       drawStrokes: [],
+      drawBackground: "#111111",
     };
     setNotes([...notes, note]);
     setNewName("");
@@ -6163,13 +6568,15 @@ function NotesPanel({
 
         <div className="flex-1 overflow-y-auto p-4 md:p-6">
           {noteMode === "text" ? (
-            <WordNoteEditor note={openNote} onChange={(textContent) => updateNote(openNote.id, { textContent })} onNameChange={(name) => updateNote(openNote.id, { name })} />
+            <WordNoteEditor key={openNote.id} note={openNote} onChange={(textContent) => updateNote(openNote.id, { textContent })} onNameChange={(name) => updateNote(openNote.id, { name })} />
           ) : (
             <DrawingCanvas
               strokes={openNote.drawStrokes}
               onStrokesChange={(strokes) =>
                 updateNote(openNote.id, { drawStrokes: strokes })
               }
+              background={openNote.drawBackground ?? "#111111"}
+              onBackgroundChange={(drawBackground) => updateNote(openNote.id, { drawBackground })}
             />
           )}
         </div>
@@ -6691,7 +7098,10 @@ export default function App() {
     useState(false);
   const [showAccessibility, setShowAccessibility] =
     useState(false);
+  const [showAccount, setShowAccount] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [manualSyncing, setManualSyncing] = useState(false);
+  const [manualSyncMessage, setManualSyncMessage] = useState("");
 
   const [darkMode, setDarkMode] = useLocalStorage<boolean>(
     "qs_dark",
@@ -7087,6 +7497,7 @@ export default function App() {
     setCurrentUser(null);
     setSessionUserId("");
     setSidebarOpen(false);
+    setShowAccount(false);
     setScreen("access");
   }
 
@@ -7103,6 +7514,92 @@ export default function App() {
     setView(v);
     setShowSubjectManager(false);
     setSidebarOpen(false);
+  }
+
+  async function saveAccountProfile(name: string, school: string) {
+    if (!currentUser) throw new Error("No account is signed in.");
+    if (!name) throw new Error("Enter your name.");
+    if (firebaseConfigured) {
+      await updateAccountProfile(currentUser.id, { name, school });
+    }
+    const updatedUser = { ...currentUser, name, school };
+    setCurrentUser(updatedUser);
+    setUsersRaw((previous) => previous.map((user) =>
+      user.id === currentUser.id ? { ...user, name, school } : user,
+    ));
+  }
+
+  async function changeAccountPassword(currentPassword: string, newPassword: string) {
+    if (!currentUser) throw new Error("No account is signed in.");
+    if (firebaseConfigured) {
+      await signInWithPassword(currentUser.email, currentPassword);
+      await updateAccountPassword(newPassword);
+      return;
+    }
+    const account = users.find((user) => user.id === currentUser.id);
+    if (!account || !verifyPassword(currentPassword, account.passwordHash)) {
+      throw new Error("The current password is incorrect.");
+    }
+    const passwordHash = simpleHash(newPassword);
+    setUsersRaw((previous) => previous.map((user) =>
+      user.id === currentUser.id ? { ...user, passwordHash } : user,
+    ));
+    setCurrentUser((previous) => previous ? { ...previous, passwordHash } : previous);
+  }
+
+  async function handleManualSync() {
+    if (!firebaseConfigured || !currentUser) {
+      setManualSyncMessage("Cloud sync is unavailable.");
+      return;
+    }
+    if (studyDataLoadedUserId !== currentUser.id) {
+      setManualSyncMessage("Saved data is still loading.");
+      return;
+    }
+
+    setManualSyncing(true);
+    setManualSyncMessage("");
+    try {
+      const userId = currentUser.id;
+      await studyDataSaveQueueRef.current;
+      const dataToSave = studyDataRef.current;
+      const serializedToSave = stableStringify(dataToSave);
+      if (serializedToSave !== lastSyncedStudyDataRef.current) {
+        const result = await saveStudyData(userId, dataToSave);
+        lastSyncedStudyDataRef.current = serializedToSave;
+        if (result) lastRemoteStudyDataUpdatedAtRef.current = result.updatedAt;
+      }
+
+      const remote = await loadStudyData(userId);
+      if (currentStudyDataUserIdRef.current !== userId) return;
+      if (stableStringify(studyDataRef.current) !== lastSyncedStudyDataRef.current) {
+        setStudyDataSaveRetry((retry) => retry + 1);
+        setManualSyncMessage("Saved; newer edits are syncing.");
+        return;
+      }
+      if (remote) {
+        const nextData = { ...studyDataRef.current, ...remote.value };
+        lastRemoteStudyDataUpdatedAtRef.current = remote.updatedAt;
+        lastSyncedStudyDataRef.current = stableStringify(nextData);
+        if (Array.isArray(nextData.selectedSubjects)) setSelectedSubjectsRaw(nextData.selectedSubjects as SelectedSubject[]);
+        if (Array.isArray(nextData.scores)) setScoresRaw(nextData.scores as ScoreEntry[]);
+        if (Array.isArray(nextData.pastPaperScores)) setPastPaperScoresRaw(nextData.pastPaperScores as PastPaperScoreEntry[]);
+        if (Array.isArray(nextData.tasks)) setTasksRaw(nextData.tasks as Task[]);
+        if (Array.isArray(nextData.examDates)) setExamDatesRaw(nextData.examDates as ExamDate[]);
+        if (Array.isArray(nextData.notes)) setNotesRaw(nextData.notes as NoteFile[]);
+        if (nextData.accessibility) setAccessibility(nextData.accessibility as AccessibilitySettings);
+        if (typeof nextData.darkMode === "boolean") setDarkMode(nextData.darkMode);
+      }
+      setStudyDataSyncError("");
+      setManualSyncMessage("Synced.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown sync error.";
+      console.error("Manual study data sync failed:", error);
+      setStudyDataSyncError(`Manual sync failed: ${message}`);
+      setManualSyncMessage("Sync failed.");
+    } finally {
+      setManualSyncing(false);
+    }
   }
 
   if (screen === "access") {
@@ -7136,8 +7633,8 @@ export default function App() {
     studyDataLoadedUserId !== currentUser.id
   ) {
     return (
-      <div className="min-h-screen bg-background text-foreground flex items-center justify-center p-6">
-        <div className="max-w-md text-center">
+      <div className="flex min-h-screen flex-col items-center bg-background p-6 text-foreground">
+        <div className="my-auto max-w-md py-4 text-center">
           {studyDataLoadError ? (
             <>
               <p className="text-sm text-destructive mb-4" role="alert">
@@ -7157,6 +7654,7 @@ export default function App() {
             </p>
           )}
         </div>
+        <LegalFooter />
       </div>
     );
   }
@@ -7191,8 +7689,8 @@ export default function App() {
         fontSize: `${accessibility.fontScale}%`,
         fontFamily,
         filter: [
-          accessibility.colour === "warm" ? "sepia(0.12) saturate(1.08)" : "",
-          accessibility.colour === "cool" ? "hue-rotate(8deg) saturate(0.96)" : "",
+          accessibility.colour === "warm" ? "sepia(0.18) saturate(1.12)" : "",
+          accessibility.colour === "cool" ? "hue-rotate(24deg) saturate(1.16)" : "",
           accessibility.highContrast ? "contrast(1.15)" : "",
         ].filter(Boolean).join(" ") || undefined,
       }}
@@ -7215,6 +7713,13 @@ export default function App() {
           darkMode={darkMode}
           toggleDark={() => setDarkMode((d: boolean) => !d)}
           onClose={() => setSidebarOpen(false)}
+          onOpenAccount={() => {
+            setSidebarOpen(false);
+            setShowAccount(true);
+          }}
+          onSync={() => void handleManualSync()}
+          syncing={manualSyncing}
+          syncMessage={manualSyncMessage}
         />
       </div>
 
@@ -7381,8 +7886,19 @@ export default function App() {
               )}
             </>
           )}
+          <LegalFooter />
         </div>
       </main>
+      {showAccount && (
+        <AccountPanel
+          user={currentUser}
+          selectedSubjects={selectedSubjects}
+          setSelectedSubjects={setSelectedSubjects}
+          onSaveProfile={saveAccountProfile}
+          onChangePassword={changeAccountPassword}
+          onClose={() => setShowAccount(false)}
+        />
+      )}
     </div>
   );
 }

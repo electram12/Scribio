@@ -5,6 +5,8 @@ import {
   signUpWithPassword as supabaseSignUp,
   signOutUser,
   updateUserProfileStatus as supabaseUpdateUserProfileStatus,
+  updateAccountProfile as supabaseUpdateAccountProfile,
+  updateAccountPassword as supabaseUpdateAccountPassword,
   loadUserProfile,
   saveStudyData,
   loadStudyData,
@@ -70,4 +72,15 @@ export function updateUserProfileStatus(
   status: "pending" | "approved" | "denied",
 ) {
   return supabaseUpdateUserProfileStatus(userId, status);
+}
+
+export function updateAccountProfile(
+  userId: string,
+  profile: { name: string; school: string },
+) {
+  return supabaseUpdateAccountProfile(userId, profile);
+}
+
+export function updateAccountPassword(password: string) {
+  return supabaseUpdateAccountPassword(password);
 }
