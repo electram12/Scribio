@@ -165,6 +165,8 @@ interface ExamDate {
   level?: Level;
   date: string;
   time?: string;
+  startTime?: string;
+  endTime?: string;
   kind?: "Exam" | "Prelim" | "Test" | "Other";
   title?: string;
   isPrelim?: boolean;
@@ -397,6 +399,11 @@ function getCalendarEventName(event: ExamDate): string {
   return getCalendarEventKind(event) === "Other"
     ? event.title || "Event"
     : event.subject || "Untitled event";
+}
+
+function getCalendarEventTime(event: ExamDate): string {
+  if (event.startTime && event.endTime) return `${event.startTime}–${event.endTime}`;
+  return event.startTime || event.time || "";
 }
 
 function getCalendarEventColor(kind: NonNullable<ExamDate["kind"]>): string {
@@ -632,7 +639,7 @@ function MonthlyCalendar({
               title={
                 eventsOnDay.length
                   ? eventsOnDay
-                      .map((e) => `${getCalendarEventKind(e)}: ${getCalendarEventName(e)}${e.time ? " at " + e.time : ""}`)
+                      .map((e) => `${getCalendarEventKind(e)}: ${getCalendarEventName(e)}${getCalendarEventTime(e) ? " at " + getCalendarEventTime(e) : ""}`)
                       .join(", ")
                   : dateStr
               }
@@ -2653,7 +2660,7 @@ function Dashboard({
                     <p className="text-xs text-muted-foreground">
                       {getCalendarEventKind(e)} ·{" "}
                       {formatDate(e.date)}
-                      {e.time && ` at ${e.time}`}
+                      {getCalendarEventTime(e) && ` at ${getCalendarEventTime(e)}`}
                     </p>
                   </div>
                   <div
@@ -3494,6 +3501,7 @@ function MarkingSchemeExaminer({ selectedSubjects }: { selectedSubjects: Selecte
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
   const resultRef = useRef<HTMLDivElement>(null);
   const subjects = Array.from(new Set([...SUBJECTS_LIST, ...selectedSubjects.map((item) => item.subject)]));
   const criteria = getExaminerCriteria(subject);
@@ -3621,15 +3629,48 @@ function MarkingSchemeExaminer({ selectedSubjects }: { selectedSubjects: Selecte
 }
 
 async function encodeExamMarkerImage(file: File): Promise<string> {
-  const image = await createImageBitmap(file);
-  const scale = Math.min(1, 1600 / Math.max(image.width, image.height));
+  let imageWidth = 0;
+  let imageHeight = 0;
+  let source: CanvasImageSource;
+  let closeImage: (() => void) | null = null;
+  try {
+    const bitmap = await createImageBitmap(file);
+    imageWidth = bitmap.width;
+    imageHeight = bitmap.height;
+    source = bitmap;
+    closeImage = () => bitmap.close();
+  } catch {
+    const objectUrl = URL.createObjectURL(file);
+    try {
+      const loaded = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const element = new Image();
+        element.onload = () => resolve(element);
+        element.onerror = () => reject(new Error(`The image "${file.name}" could not be decoded.`));
+        element.src = objectUrl;
+      });
+      imageWidth = loaded.naturalWidth;
+      imageHeight = loaded.naturalHeight;
+      source = loaded;
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  }
+  if (!imageWidth || !imageHeight) throw new Error("The uploaded image has invalid dimensions.");
+  const scale = Math.min(1, 1200 / Math.max(imageWidth, imageHeight));
   const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(image.width * scale));
-  canvas.height = Math.max(1, Math.round(image.height * scale));
-  canvas.getContext("2d")?.drawImage(image, 0, 0, canvas.width, canvas.height);
-  image.close();
+  canvas.width = Math.max(1, Math.round(imageWidth * scale));
+  canvas.height = Math.max(1, Math.round(imageHeight * scale));
+  const context = canvas.getContext("2d", { alpha: false });
+  if (!context) {
+    closeImage?.();
+    throw new Error("This browser could not prepare the image.");
+  }
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(source, 0, 0, canvas.width, canvas.height);
+  closeImage?.();
   const blob = await new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob((value) => value ? resolve(value) : reject(new Error("Could not prepare an image.")), "image/jpeg", 0.78);
+    canvas.toBlob((value) => value ? resolve(value) : reject(new Error("Could not prepare an image.")), "image/jpeg", 0.72);
   });
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -3653,6 +3694,7 @@ function ExamMarker({ selectedSubjects }: { selectedSubjects: SelectedSubject[] 
   const [error, setError] = useState("");
   const [isReviewing, setIsReviewing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
   const resultRef = useRef<HTMLDivElement>(null);
   const errorRef = useRef<HTMLParagraphElement>(null);
   imagesRef.current = images;
@@ -3669,9 +3711,8 @@ function ExamMarker({ selectedSubjects }: { selectedSubjects: SelectedSubject[] 
   function addImages(files: FileList | null) {
     if (!files) return;
     const selected = Array.from(files);
-    const valid = selected.filter((file) => file.type.startsWith("image/") && file.size <= 10 * 1024 * 1024);
-    const available = Math.max(0, 5 - images.length);
-    const additions = valid.slice(0, available).map((file) => ({
+    const valid = selected.filter((file) => file.type.startsWith("image/"));
+    const additions = valid.map((file) => ({
       id: generateId(),
       file,
       preview: URL.createObjectURL(file),
@@ -3679,11 +3720,7 @@ function ExamMarker({ selectedSubjects }: { selectedSubjects: SelectedSubject[] 
     }));
     setImages((current) => [...current, ...additions]);
     setResult(null);
-    setError(selected.some((file) => file.size > 10 * 1024 * 1024)
-      ? "Each image must be 10 MB or smaller."
-      : selected.length > additions.length
-        ? "You can add up to five images. Unsupported files were skipped."
-        : "");
+    setError(selected.length > additions.length ? "Unsupported files were skipped. Please choose image files." : "");
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
@@ -3761,7 +3798,7 @@ function ExamMarker({ selectedSubjects }: { selectedSubjects: SelectedSubject[] 
   return <div className="mx-auto max-w-5xl space-y-5 p-6">
     <header>
       <h1 className="text-xl font-bold">Exam Marker</h1>
-      <p className="mt-1 text-sm text-muted-foreground">Upload a question and its marking scheme for a tailored explanation. Add your answer for a mark estimate and specific feedback.</p>
+      <p className="mt-1 text-sm text-muted-foreground">Answer one past paper question at a time. Upload its question and marking scheme for a tailored explanation, then add your answer for a mark estimate and specific feedback.</p>
       <p className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm leading-5 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">Any mark shown is an estimate for practice only. It is not guaranteed and may differ from the mark awarded by a QS marker.</p>
     </header>
     <form onSubmit={reviewAnswer} className="space-y-4">
@@ -3777,7 +3814,7 @@ function ExamMarker({ selectedSubjects }: { selectedSubjects: SelectedSubject[] 
       <section className="space-y-3 rounded-lg border border-border bg-card p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-bold">Your source material</h2>
-          <span className="text-xs text-muted-foreground">{images.length}/5 images</span>
+          <span className="text-xs text-muted-foreground">{images.length} {images.length === 1 ? "image" : "images"} · unlimited</span>
         </div>
         <p className="text-xs leading-5 text-muted-foreground">JPEG, PNG and WebP images are supported.</p>
         <div className="flex flex-wrap gap-2">
@@ -3786,10 +3823,14 @@ function ExamMarker({ selectedSubjects }: { selectedSubjects: SelectedSubject[] 
             <option value="markingScheme">Mark scheme image</option>
             <option value="answer">Your answer image</option>
           </select>
-          <button type="button" disabled={images.length >= 5} onClick={() => fileInputRef.current?.click()} className="inline-flex items-center gap-2 rounded-lg bg-muted px-3 py-2 text-sm font-semibold disabled:opacity-40">
+          <button type="button" onClick={() => fileInputRef.current?.click()} className="inline-flex items-center gap-2 rounded-lg bg-muted px-3 py-2 text-sm font-semibold">
             <Upload className="h-4 w-4" /> Add image
           </button>
+          <button type="button" onClick={() => cameraInputRef.current?.click()} className="inline-flex items-center gap-2 rounded-lg bg-muted px-3 py-2 text-sm font-semibold">
+            <Camera className="h-4 w-4" /> Use camera
+          </button>
           <input ref={fileInputRef} hidden type="file" accept="image/*" multiple onChange={(event) => addImages(event.target.files)} />
+          <input ref={cameraInputRef} hidden type="file" accept="image/*" capture="environment" multiple onChange={(event) => addImages(event.target.files)} />
         </div>
         {images.length > 0 && <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {images.map((image) => <figure key={image.id} className="relative overflow-hidden rounded-lg border border-border bg-muted">
@@ -5343,6 +5384,8 @@ function ExamsPanel({
     level: (selectedSubjects[0]?.level || "Higher") as Level,
     date: "",
     time: "",
+    startTime: "",
+    endTime: "",
     kind: "Exam" as NonNullable<ExamDate["kind"]>,
     title: "",
   });
@@ -5354,6 +5397,8 @@ function ExamsPanel({
       level: selectedSubjects[0]?.level || "Higher",
       date: "",
       time: "",
+      startTime: "",
+      endTime: "",
       kind: "Exam",
       title: "",
     });
@@ -5367,6 +5412,8 @@ function ExamsPanel({
       level: exam.level || "Higher",
       date: exam.date,
       time: exam.time || "",
+      startTime: exam.startTime || "",
+      endTime: exam.endTime || "",
       kind: getCalendarEventKind(exam),
       title: exam.title || "",
     });
@@ -5383,6 +5430,8 @@ function ExamsPanel({
             level: examForm.kind === "Other" ? undefined : examForm.level,
             date: examForm.date,
             time: examForm.time || undefined,
+            startTime: examForm.startTime || undefined,
+            endTime: examForm.endTime || undefined,
             kind: examForm.kind,
             title: examForm.kind === "Other" ? examForm.title.trim() : undefined,
             isPrelim: examForm.kind === "Prelim",
@@ -5397,6 +5446,8 @@ function ExamsPanel({
         level: examForm.kind === "Other" ? undefined : examForm.level,
         date: examForm.date,
         time: examForm.time || undefined,
+        startTime: examForm.startTime || undefined,
+        endTime: examForm.endTime || undefined,
         kind: examForm.kind,
         title: examForm.kind === "Other" ? examForm.title.trim() : undefined,
         isPrelim: examForm.kind === "Prelim",
@@ -5478,10 +5529,10 @@ function ExamsPanel({
                         {getCalendarEventKind(e)}
                         {e.level && ` · ${LEVEL_SHORT[e.level]}`} ·{" "}
                         {formatDate(e.date)}
-                        {e.time && (
+                        {getCalendarEventTime(e) && (
                           <span className="font-semibold text-foreground">
                             {" "}
-                            at {e.time}
+                            at {getCalendarEventTime(e)}
                           </span>
                         )}
                       </p>
@@ -5547,7 +5598,7 @@ function ExamsPanel({
                         {getCalendarEventKind(e)}
                         {e.level && ` · ${LEVEL_SHORT[e.level]}`} ·{" "}
                         {formatDate(e.date)}
-                        {e.time && ` at ${e.time}`}
+                        {getCalendarEventTime(e) && ` at ${getCalendarEventTime(e)}`}
                       </p>
                     </div>
                     <button
@@ -5653,7 +5704,7 @@ function ExamsPanel({
                 </div>
               </>
             )}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div>
                 <label className="block text-xs font-semibold mb-1">
                   Date
@@ -5673,19 +5724,34 @@ function ExamsPanel({
               </div>
               <div>
                 <label className="block text-xs font-semibold mb-1">
-                  Time (optional)
+                  Start time (optional)
                 </label>
                 <input
-                  value={examForm.time}
+                  value={examForm.startTime}
                   onChange={(e) =>
                     setExamForm((f) => ({
                       ...f,
-                      time: e.target.value,
+                      startTime: e.target.value,
                     }))
                   }
                   type="time"
                   className={selCls}
-                  placeholder="e.g. 09:00"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold mb-1">
+                  End time (optional)
+                </label>
+                <input
+                  value={examForm.endTime}
+                  onChange={(e) =>
+                    setExamForm((f) => ({
+                      ...f,
+                      endTime: e.target.value,
+                    }))
+                  }
+                  type="time"
+                  className={selCls}
                 />
               </div>
             </div>
@@ -6409,7 +6475,7 @@ function DrawingCanvas({
         ref={canvasRef}
         width={800}
         height={500}
-        className="w-full rounded-xl cursor-crosshair touch-none"
+        className="h-[calc(100vh-220px)] min-h-[500px] w-full rounded-xl cursor-crosshair touch-none"
         style={{ background, touchAction: "none" }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -6430,6 +6496,28 @@ function WordNoteEditor({
   onNameChange: (name: string) => void;
 }) {
   const editorRef = useRef<HTMLDivElement>(null);
+  const [activeFormats, setActiveFormats] = useState({
+    bold: false,
+    italic: false,
+    underline: false,
+    alignLeft: false,
+    alignCenter: false,
+    alignRight: false,
+    unorderedList: false,
+    orderedList: false,
+  });
+  const refreshActiveFormats = () => {
+    setActiveFormats({
+      bold: document.queryCommandState("bold"),
+      italic: document.queryCommandState("italic"),
+      underline: document.queryCommandState("underline"),
+      alignLeft: document.queryCommandState("justifyLeft"),
+      alignCenter: document.queryCommandState("justifyCenter"),
+      alignRight: document.queryCommandState("justifyRight"),
+      unorderedList: document.queryCommandState("insertUnorderedList"),
+      orderedList: document.queryCommandState("insertOrderedList"),
+    });
+  };
   useEffect(() => {
     const editor = editorRef.current;
     if (editor && document.activeElement !== editor) {
@@ -6440,17 +6528,18 @@ function WordNoteEditor({
   const runCommand = (command: string, value?: string) => {
     editorRef.current?.focus();
     document.execCommand(command, false, value);
+    refreshActiveFormats();
     onChange(editorRef.current?.innerText || "");
   };
   const tools = [
-    { label: "Bold", icon: <Bold className="w-3.5 h-3.5" />, command: "bold" },
-    { label: "Italic", icon: <Italic className="w-3.5 h-3.5" />, command: "italic" },
-    { label: "Underline", icon: <Underline className="w-3.5 h-3.5" />, command: "underline" },
-    { label: "Align left", icon: <AlignLeft className="w-3.5 h-3.5" />, command: "justifyLeft" },
-    { label: "Align centre", icon: <AlignCenter className="w-3.5 h-3.5" />, command: "justifyCenter" },
-    { label: "Align right", icon: <AlignRight className="w-3.5 h-3.5" />, command: "justifyRight" },
-    { label: "Bulleted list", icon: <List className="w-3.5 h-3.5" />, command: "insertUnorderedList" },
-    { label: "Numbered list", icon: <ListOrdered className="w-3.5 h-3.5" />, command: "insertOrderedList" },
+    { label: "Bold", icon: <Bold className="w-3.5 h-3.5" />, command: "bold", active: "bold" as const },
+    { label: "Italic", icon: <Italic className="w-3.5 h-3.5" />, command: "italic", active: "italic" as const },
+    { label: "Underline", icon: <Underline className="w-3.5 h-3.5" />, command: "underline", active: "underline" as const },
+    { label: "Align left", icon: <AlignLeft className="w-3.5 h-3.5" />, command: "justifyLeft", active: "alignLeft" as const },
+    { label: "Align centre", icon: <AlignCenter className="w-3.5 h-3.5" />, command: "justifyCenter", active: "alignCenter" as const },
+    { label: "Align right", icon: <AlignRight className="w-3.5 h-3.5" />, command: "justifyRight", active: "alignRight" as const },
+    { label: "Bulleted list", icon: <List className="w-3.5 h-3.5" />, command: "insertUnorderedList", active: "unorderedList" as const },
+    { label: "Numbered list", icon: <ListOrdered className="w-3.5 h-3.5" />, command: "insertOrderedList", active: "orderedList" as const },
   ];
   return (
     <div className="max-w-4xl mx-auto border border-border rounded-xl overflow-hidden bg-card shadow-sm">
@@ -6461,10 +6550,10 @@ function WordNoteEditor({
         <select aria-label="Font size" defaultValue="3" onChange={(e) => runCommand("fontSize", e.target.value)} className="px-2 py-1.5 rounded border border-border bg-card text-xs">
           <option value="1">Small</option><option value="3">Normal</option><option value="5">Large</option><option value="7">Huge</option>
         </select>
-        {tools.map((tool) => <button key={tool.label} type="button" title={tool.label} aria-label={tool.label} onClick={() => runCommand(tool.command)} className="p-2 rounded hover:bg-background text-muted-foreground hover:text-foreground">{tool.icon}</button>)}
+        {tools.map((tool) => <button key={tool.label} type="button" title={tool.label} aria-label={tool.label} aria-pressed={activeFormats[tool.active]} onClick={() => runCommand(tool.command)} className={`p-2 rounded border transition-colors ${activeFormats[tool.active] ? "border-primary bg-primary text-primary-foreground" : "border-transparent text-muted-foreground hover:border-border hover:bg-background hover:text-foreground"}`}>{tool.icon}</button>)}
       </div>
       <input aria-label="Note title" value={note.name} onChange={(e) => onNameChange(e.target.value)} className="w-full px-6 pt-5 text-2xl font-bold bg-transparent outline-none" />
-      <div ref={editorRef} contentEditable role="textbox" aria-label="Note body" dir="ltr" style={{ direction: "ltr", unicodeBidi: "plaintext", textAlign: "left" }} suppressContentEditableWarning onInput={(e) => onChange(e.currentTarget.innerText)} className="min-h-[55vh] p-6 outline-none whitespace-pre-wrap text-base leading-7" />
+      <div ref={editorRef} contentEditable role="textbox" aria-label="Note body" dir="ltr" style={{ direction: "ltr", unicodeBidi: "plaintext", textAlign: "left" }} suppressContentEditableWarning onInput={(e) => onChange(e.currentTarget.innerText)} onKeyUp={refreshActiveFormats} onMouseUp={refreshActiveFormats} className="min-h-[55vh] p-6 outline-none whitespace-pre-wrap text-base leading-7" />
     </div>
   );
 }

@@ -16,7 +16,6 @@ interface ExamMarkerRequest {
 }
 
 const MAX_TEXT_LENGTH = 20000;
-const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
 const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const RATE_LIMIT = 12;
 const RATE_WINDOW_MS = 60 * 1000;
@@ -58,11 +57,6 @@ export async function handleExamMarker(
   if ([questionText, markingSchemeText, answerText].some((text) => text.length > MAX_TEXT_LENGTH)) {
     return { status: 413, body: { error: "Each text field must be 20,000 characters or fewer." } };
   }
-  if (documents.length > 5) {
-    return { status: 413, body: { error: "Upload up to five images per marking session." } };
-  }
-
-  let imageBytes = 0;
   for (const document of documents) {
     if (!document || !["question", "answer", "markingScheme"].includes(document.type)) {
       return { status: 400, body: { error: "Each uploaded image must have a valid document type." } };
@@ -73,10 +67,6 @@ export async function handleExamMarker(
     if (!/^[A-Za-z0-9+/]*={0,2}$/.test(document.data)) {
       return { status: 400, body: { error: "One of the uploaded images could not be read." } };
     }
-    imageBytes += Math.floor(document.data.length * 3 / 4);
-  }
-  if (imageBytes > MAX_IMAGE_BYTES) {
-    return { status: 413, body: { error: "Images exceed the 3 MB total limit. Upload fewer or smaller images." } };
   }
 
   const hasQuestion = Boolean(questionText || documents.some((document) => document.type === "question"));
@@ -113,7 +103,7 @@ export async function handleExamMarker(
     let providerMessage = "";
     let providerStatus: number | undefined;
     let generatedText = "";
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
           method: "POST",
@@ -129,7 +119,7 @@ export async function handleExamMarker(
             ],
             response_format: { type: "json_object" },
             temperature: 0.2,
-            max_tokens: 2048,
+            max_tokens: 1536,
           }),
         });
         if (response.ok) {
@@ -157,8 +147,8 @@ export async function handleExamMarker(
       const retryable = [500, 502, 503, 504].includes(providerStatus || 0)
         || providerStatus === 429 && temporaryOverload
         || temporaryOverload;
-      if (!retryable || attempt === 2) break;
-      await new Promise((resolve) => setTimeout(resolve, 700 * (attempt + 1)));
+      if (!retryable || attempt === 1) break;
+      await new Promise((resolve) => setTimeout(resolve, 400));
     }
 
     if (!generatedText) {
